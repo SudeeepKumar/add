@@ -12,9 +12,9 @@ import { Input } from '../components/common/Input';
 import { Select } from '../components/common/Select';
 import { EmptyState } from '../components/common/EmptyState';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { Plus, Pencil, Trash2, Receipt, Search, Filter } from 'lucide-react';
+import { Plus, Pencil, Trash2, Receipt, Search, Filter, Calendar } from 'lucide-react';
 import { formatCurrency } from '../utils/currencyUtils';
-import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, TRANSACTION_TYPES } from '../utils/constants';
+import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, TRANSACTION_TYPES, GST_RATES, PAYMENT_METHODS } from '../utils/constants';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 
@@ -27,6 +27,10 @@ export const Transactions = () => {
     const [filterType, setFilterType] = useState('all');
     const [searchQuery, setSearchQuery] = useState('');
 
+    // Date range filter
+    const [dateFrom, setDateFrom] = useState('');
+    const [dateTo, setDateTo] = useState('');
+
     // Form state
     const [formData, setFormData] = useState({
         type: 'expense',
@@ -34,7 +38,8 @@ export const Transactions = () => {
         amount: '',
         date: format(new Date(), 'yyyy-MM-dd'),
         description: '',
-        gstRate: 18,
+        gstRate: '18',
+        paymentMethod: 'Cash',
     });
 
     useEffect(() => {
@@ -55,7 +60,8 @@ export const Transactions = () => {
             amount: '',
             date: format(new Date(), 'yyyy-MM-dd'),
             description: '',
-            gstRate: 18,
+            gstRate: '18',
+            paymentMethod: 'Cash',
         });
         setEditingTransaction(null);
     };
@@ -69,7 +75,8 @@ export const Transactions = () => {
                 amount: transaction.amount.toString(),
                 date: format(transaction.date, 'yyyy-MM-dd'),
                 description: transaction.description || '',
-                gstRate: transaction.gstRate || 18,
+                gstRate: transaction.gstRate?.toString() || '18',
+                paymentMethod: transaction.paymentMethod || 'Cash',
             });
         } else {
             resetForm();
@@ -98,6 +105,7 @@ export const Transactions = () => {
                 date: new Date(formData.date),
                 description: formData.description,
                 gstRate: parseFloat(formData.gstRate),
+                paymentMethod: formData.paymentMethod,
             };
 
             if (editingTransaction) {
@@ -142,10 +150,41 @@ export const Transactions = () => {
                 !searchQuery ||
                 t.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
                 t.category.toLowerCase().includes(searchQuery.toLowerCase());
-            return matchesType && matchesSearch;
+
+            // Date range filter
+            let matchesDate = true;
+            if (dateFrom || dateTo) {
+                const tDate = t.date?.toDate?.() || new Date(t.date);
+                if (dateFrom) {
+                    matchesDate = tDate >= new Date(dateFrom);
+                }
+                if (dateTo && matchesDate) {
+                    const toDateEnd = new Date(dateTo);
+                    toDateEnd.setHours(23, 59, 59, 999);
+                    matchesDate = tDate <= toDateEnd;
+                }
+            }
+
+            return matchesType && matchesSearch && matchesDate;
         });
 
     const categories = formData.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+
+    const gstOptions = GST_RATES;
+
+    const paymentMethodOptions = [
+        { value: '', label: 'Select Payment Method' },
+        ...PAYMENT_METHODS.map(m => ({ value: m, label: m }))
+    ];
+
+    // Summary calculations
+    const totalIncome = filteredTransactions
+        .filter(t => t.type === 'income')
+        .reduce((sum, t) => sum + (t.amount || 0), 0);
+
+    const totalExpenses = filteredTransactions
+        .filter(t => t.type === 'expense')
+        .reduce((sum, t) => sum + (t.amount || 0), 0);
 
     if (loading) {
         return (
@@ -171,7 +210,7 @@ export const Transactions = () => {
 
             {/* Filters */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     {/* Type Filter */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -183,7 +222,7 @@ export const Transactions = () => {
                                 <button
                                     key={type}
                                     onClick={() => setFilterType(type)}
-                                    className={`px-4 py-2 rounded-lg font-medium transition-all ${filterType === type
+                                    className={`px-3 py-1.5 rounded-lg font-medium transition-all text-sm ${filterType === type
                                         ? 'bg-primary-600 text-white'
                                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                                         }`}
@@ -195,7 +234,7 @@ export const Transactions = () => {
                     </div>
 
                     {/* Search */}
-                    <div className="md:col-span-2">
+                    <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
                             <Search size={16} className="inline mr-1" />
                             Search
@@ -206,6 +245,55 @@ export const Transactions = () => {
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                         />
+                    </div>
+
+                    {/* Date From */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <Calendar size={16} className="inline mr-1" />
+                            From Date
+                        </label>
+                        <Input
+                            type="date"
+                            value={dateFrom}
+                            onChange={(e) => setDateFrom(e.target.value)}
+                        />
+                    </div>
+
+                    {/* Date To */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <Calendar size={16} className="inline mr-1" />
+                            To Date
+                        </label>
+                        <Input
+                            type="date"
+                            value={dateTo}
+                            onChange={(e) => setDateTo(e.target.value)}
+                        />
+                    </div>
+                </div>
+
+                {/* Clear date filters + Summary */}
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                    {(dateFrom || dateTo) && (
+                        <button
+                            onClick={() => { setDateFrom(''); setDateTo(''); }}
+                            className="text-sm text-primary-600 hover:text-primary-800 underline"
+                        >
+                            Clear date filters
+                        </button>
+                    )}
+                    <div className="flex gap-4 text-sm ml-auto">
+                        <span className="text-success-600 font-semibold">
+                            Income: {formatCurrency(totalIncome)}
+                        </span>
+                        <span className="text-danger-600 font-semibold">
+                            Expenses: {formatCurrency(totalExpenses)}
+                        </span>
+                        <span className={`font-bold ${(totalIncome - totalExpenses) >= 0 ? 'text-success-700' : 'text-danger-700'}`}>
+                            Net: {formatCurrency(totalIncome - totalExpenses)}
+                        </span>
                     </div>
                 </div>
             </div>
@@ -228,6 +316,12 @@ export const Transactions = () => {
                                     </th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         Description
+                                    </th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Payment
+                                    </th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        GST
                                     </th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         Amount
@@ -256,8 +350,14 @@ export const Transactions = () => {
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                                             {transaction.category}
                                         </td>
-                                        <td className="px-6 py-4 text-sm text-gray-600">
+                                        <td className="px-6 py-4 text-sm text-gray-600 max-w-xs truncate">
                                             {transaction.description || '-'}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                                            {transaction.paymentMethod || '-'}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                                            {transaction.gstRate ? `${transaction.gstRate}%` : '-'}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold">
                                             <span
@@ -362,13 +462,20 @@ export const Transactions = () => {
                         onChange={(e) => setFormData({ ...formData, date: e.target.value })}
                     />
 
-                    {/* GST Rate */}
-                    <Input
-                        label="GST Rate (%)"
-                        type="number"
-                        step="0.01"
+                    {/* GST Rate — Dropdown */}
+                    <Select
+                        label="GST Rate"
                         value={formData.gstRate}
                         onChange={(e) => setFormData({ ...formData, gstRate: e.target.value })}
+                        options={gstOptions}
+                    />
+
+                    {/* Payment Method */}
+                    <Select
+                        label="Payment Method"
+                        value={formData.paymentMethod}
+                        onChange={(e) => setFormData({ ...formData, paymentMethod: e.target.value })}
+                        options={paymentMethodOptions}
                     />
 
                     {/* Description */}

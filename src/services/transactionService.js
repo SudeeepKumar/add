@@ -159,3 +159,53 @@ export const calculateProfitLoss = async (userId, startDate, endDate) => {
         throw error;
     }
 };
+
+/**
+ * Get transactions linked to a specific reference (e.g. product ID or invoice ID)
+ */
+export const getTransactionsByReference = async (referenceId) => {
+    try {
+        const q = query(
+            collection(db, COLLECTION_NAME),
+            where('referenceId', '==', referenceId)
+        );
+
+        const querySnapshot = await getDocs(q);
+        return querySnapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+            date: doc.data().date?.toDate?.() || new Date(doc.data().date),
+        }));
+    } catch (error) {
+        console.error('Error getting transactions by reference:', error);
+        throw error;
+    }
+};
+
+/**
+ * Update all transactions linked to a referenceId
+ * Used for data sync when purchase price/quantity changes
+ */
+export const updateTransactionsByReference = async (referenceId, updates) => {
+    try {
+        const q = query(
+            collection(db, COLLECTION_NAME),
+            where('referenceId', '==', referenceId)
+        );
+
+        const querySnapshot = await getDocs(q);
+        const updatePromises = querySnapshot.docs.map((docSnap) =>
+            updateDoc(doc(db, COLLECTION_NAME, docSnap.id), {
+                ...updates,
+                updatedAt: Timestamp.now(),
+            })
+        );
+
+        await Promise.all(updatePromises);
+        return querySnapshot.docs.length;
+    } catch (error) {
+        console.error('Error updating transactions by reference:', error);
+        throw error;
+    }
+};
+
