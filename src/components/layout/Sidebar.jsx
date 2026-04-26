@@ -2,6 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import {
     LayoutDashboard,
+    ShoppingBag,
     Receipt,
     Package,
     FileText,
@@ -30,6 +31,7 @@ export const Sidebar = ({ onClose }) => {
 
     const navItems = [
         { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+        { path: '/sales', icon: ShoppingBag, label: 'Sales' },
         { path: '/transactions', icon: Receipt, label: 'Transactions' },
         { path: '/inventory', icon: Package, label: 'Inventory' },
         { path: '/invoices', icon: FileText, label: 'Invoices' },

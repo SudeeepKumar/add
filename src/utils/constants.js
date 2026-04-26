@@ -57,3 +57,28 @@ export const PAYMENT_METHODS = [
     'Credit (Supplier)',
     'Other',
 ];
+
+/**
+ * Sales platform options (ecommerce channels)
+ */
+export const SALES_PLATFORMS = [
+    'Flipkart',
+    'Amazon',
+    'Meesho',
+    'Myntra',
+    'JioMart',
+    'Website / Direct',
+    'Offline / Walk-in',
+    'Other',
+];
+
+/**
+ * Sale status options
+ */
+export const SALE_STATUSES = [
+    { value: 'completed', label: 'Completed' },
+    { value: 'pending', label: 'Pending' },
+    { value: 'shipped', label: 'Shipped' },
+    { value: 'returned', label: 'Returned' },
+    { value: 'cancelled', label: 'Cancelled' },
+];

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { subscribeToTransactions } from '../services/transactionService';
 import { subscribeToProducts } from '../services/productService';
+import { subscribeToSales } from '../services/salesService';
 import {
     TrendingUp,
     TrendingDown,
@@ -9,6 +10,8 @@ import {
     AlertTriangle,
     ArrowUpRight,
     ArrowDownRight,
+    ShoppingBag,
+    Award,
 } from 'lucide-react';
 import { formatCurrency } from '../utils/currencyUtils';
 import { format } from 'date-fns';
@@ -19,6 +22,7 @@ export const Dashboard = () => {
     const { user } = useAuth();
     const [transactions, setTransactions] = useState([]);
     const [products, setProducts] = useState([]);
+    const [salesData, setSalesData] = useState([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -31,6 +35,10 @@ export const Dashboard = () => {
 
         const unsubProducts = subscribeToProducts(user.uid, (data) => {
             setProducts(data);
+        });
+
+        const unsubSales = subscribeToSales(user.uid, (data) => {
+            setSalesData(data);
         });
 
         // Automatic Opening Stock Expense Generation
@@ -83,6 +91,7 @@ export const Dashboard = () => {
         return () => {
             unsubTransactions();
             unsubProducts();
+            unsubSales();
         };
     }, [user]);
 
@@ -111,6 +120,32 @@ export const Dashboard = () => {
 
     // Get recent transactions
     const recentTransactions = sortedTransactions.slice(0, 5);
+
+    // Sales stats
+    const totalSalesRevenue = salesData.reduce((sum, s) => sum + (s.totalRevenue || 0), 0);
+    const totalSalesProfit = salesData.reduce((sum, s) => sum + (s.totalProfit || 0), 0);
+    const totalSalesCount = salesData.filter(s => s.status === 'completed').length;
+
+    // Top selling products from sales data
+    const productSalesMap = {};
+    salesData.forEach(sale => {
+        (sale.items || []).forEach(item => {
+            if (!productSalesMap[item.productName]) {
+                productSalesMap[item.productName] = { qty: 0, revenue: 0 };
+            }
+            productSalesMap[item.productName].qty += item.quantity;
+            productSalesMap[item.productName].revenue += item.sellingPrice * item.quantity;
+        });
+    });
+    const topSellingProducts = Object.entries(productSalesMap)
+        .map(([name, data]) => ({ name, ...data }))
+        .sort((a, b) => b.revenue - a.revenue)
+        .slice(0, 5);
+
+    // Recent sales (last 5)
+    const recentSales = [...salesData]
+        .sort((a, b) => new Date(b.saleDate) - new Date(a.saleDate))
+        .slice(0, 5);
 
     if (loading) {
         return (
@@ -194,6 +229,55 @@ export const Dashboard = () => {
                 </div>
             </div>
 
+            {/* Sales Stats Row */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-sm font-medium text-gray-600">Total Sales</h3>
+                        <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
+                            <ShoppingBag className="w-5 h-5 text-indigo-600" />
+                        </div>
+                    </div>
+                    <p className="text-2xl font-bold text-gray-900">{totalSalesCount}</p>
+                    <div className="flex items-center gap-1 mt-2 text-indigo-600 text-sm">
+                        <span>Completed orders</span>
+                    </div>
+                </div>
+
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-sm font-medium text-gray-600">Sales Revenue</h3>
+                        <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
+                            <TrendingUp className="w-5 h-5 text-emerald-600" />
+                        </div>
+                    </div>
+                    <p className="text-2xl font-bold text-success-600">{formatCurrency(totalSalesRevenue)}</p>
+                    <div className="flex items-center gap-1 mt-2 text-success-600 text-sm">
+                        <ArrowUpRight size={16} />
+                        <span>From product sales</span>
+                    </div>
+                </div>
+
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-sm font-medium text-gray-600">Sales Profit</h3>
+                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                            totalSalesProfit >= 0 ? 'bg-success-100' : 'bg-danger-100'
+                        }`}>
+                            <DollarSign className={`w-5 h-5 ${
+                                totalSalesProfit >= 0 ? 'text-success-600' : 'text-danger-600'
+                            }`} />
+                        </div>
+                    </div>
+                    <p className={`text-2xl font-bold ${totalSalesProfit >= 0 ? 'text-success-600' : 'text-danger-600'}`}>
+                        {formatCurrency(totalSalesProfit)}
+                    </p>
+                    <div className="flex items-center gap-1 mt-2 text-gray-600 text-sm">
+                        <span>Revenue − Cost</span>
+                    </div>
+                </div>
+            </div>
+
             {/* Recent Transactions */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                 <h2 className="text-lg font-semibold text-gray-900 mb-4">Recent Transactions</h2>
@@ -231,6 +315,78 @@ export const Dashboard = () => {
                 ) : (
                     <p className="text-gray-500 text-center py-8">No transactions yet</p>
                 )}
+            </div>
+
+            {/* Recent Sales + Top Selling Products */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Recent Sales */}
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <h2 className="text-lg font-semibold text-gray-900 mb-4">Recent Sales</h2>
+                    {recentSales.length > 0 ? (
+                        <div className="space-y-3">
+                            {recentSales.map((sale) => (
+                                <div
+                                    key={sale.id}
+                                    className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-indigo-100">
+                                            <ShoppingBag className="w-5 h-5 text-indigo-600" />
+                                        </div>
+                                        <div>
+                                            <p className="font-medium text-gray-900 text-sm">
+                                                {sale.items?.map(i => i.productName).join(', ')}
+                                            </p>
+                                            <p className="text-xs text-gray-500">
+                                                {format(sale.saleDate, 'MMM dd, yyyy')} • {sale.platform}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="text-right">
+                                        <span className="font-semibold text-success-600 text-sm">
+                                            +{formatCurrency(sale.totalRevenue)}
+                                        </span>
+                                        <p className={`text-xs ${sale.totalProfit >= 0 ? 'text-success-500' : 'text-danger-500'}`}>
+                                            Profit: {formatCurrency(sale.totalProfit)}
+                                        </p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="text-gray-500 text-center py-8">No sales yet</p>
+                    )}
+                </div>
+
+                {/* Top Selling Products */}
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <h2 className="text-lg font-semibold text-gray-900 mb-4">Top Selling Products</h2>
+                    {topSellingProducts.length > 0 ? (
+                        <div className="space-y-3">
+                            {topSellingProducts.map((product, idx) => (
+                                <div
+                                    key={product.name}
+                                    className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-8 h-8 rounded-full flex items-center justify-center bg-primary-100 text-primary-700 text-sm font-bold">
+                                            {idx + 1}
+                                        </div>
+                                        <div>
+                                            <p className="font-medium text-gray-900 text-sm">{product.name}</p>
+                                            <p className="text-xs text-gray-500">{product.qty} units sold</p>
+                                        </div>
+                                    </div>
+                                    <span className="font-semibold text-gray-900 text-sm">
+                                        {formatCurrency(product.revenue)}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="text-gray-500 text-center py-8">No sales data yet</p>
+                    )}
+                </div>
             </div>
 
             {/* Low Stock Alert */}

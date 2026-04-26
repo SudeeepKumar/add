@@ -8,6 +8,7 @@ import { SignupPage } from './pages/auth/SignupPage';
 import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage';
 import { Dashboard } from './pages/Dashboard';
 import { Transactions } from './pages/Transactions';
+import { Sales } from './pages/Sales';
 import { Inventory } from './pages/Inventory';
 import { Invoices } from './pages/Invoices';
 import { Reports } from './pages/Reports';
@@ -36,6 +37,7 @@ function App() {
           >
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<Dashboard />} />
+            <Route path="sales" element={<Sales />} />
             <Route path="transactions" element={<Transactions />} />
             <Route path="inventory" element={<Inventory />} />
             <Route path="invoices" element={<Invoices />} />
