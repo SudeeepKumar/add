@@ -10,6 +10,7 @@ import { Dashboard } from './pages/Dashboard';
 import { Transactions } from './pages/Transactions';
 import { Sales } from './pages/Sales';
 import { Inventory } from './pages/Inventory';
+import { Invoices } from './pages/Invoices';
 import { Reports } from './pages/Reports';
 import { Settings } from './pages/Settings';
 import { Suppliers } from './pages/Suppliers';
@@ -39,6 +40,7 @@ function App() {
             <Route path="sales" element={<Sales />} />
             <Route path="transactions" element={<Transactions />} />
             <Route path="inventory" element={<Inventory />} />
+            <Route path="invoices" element={<Invoices />} />
             <Route path="reports" element={<Reports />} />
             <Route path="suppliers" element={<Suppliers />} />
             <Route path="bulk-import" element={<BulkImport />} />

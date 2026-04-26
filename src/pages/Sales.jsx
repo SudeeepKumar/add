@@ -33,6 +33,9 @@ const createEmptySaleItem = () => ({
     sellingPrice: '',
     purchasePrice: 0, // WAC cost, auto-filled
     availableStock: 0,
+    gstRate: 0,
+    hsnCode: '',
+    sku: '',
 });
 
 export const Sales = () => {
@@ -145,6 +148,9 @@ export const Sales = () => {
                         sellingPrice: '',
                         purchasePrice: 0,
                         availableStock: 0,
+                        gstRate: 0,
+                        hsnCode: '',
+                        sku: '',
                     } : item
                 ),
             }));
@@ -163,6 +169,9 @@ export const Sales = () => {
                         sellingPrice: product.sellingPrice?.toString() || '',
                         purchasePrice: product.purchasePrice || 0,
                         availableStock: product.quantity || 0,
+                        gstRate: product.gstRate || 0,
+                        hsnCode: product.hsnCode || '',
+                        sku: product.sku || '',
                     } : item
                 ),
             }));
@@ -198,6 +207,12 @@ export const Sales = () => {
         return qty * price;
     };
 
+    const getLineGst = (item) => {
+        const revenue = getLineRevenue(item);
+        const gstRate = parseFloat(item.gstRate) || 0;
+        return (revenue * gstRate) / 100;
+    };
+
     const getLineCost = (item) => {
         const qty = parseFloat(item.quantity) || 0;
         return qty * (item.purchasePrice || 0);
@@ -207,8 +222,9 @@ export const Sales = () => {
 
     const getGrandTotals = () => {
         const revenue = formData.items.reduce((sum, item) => sum + getLineRevenue(item), 0);
+        const gst = formData.items.reduce((sum, item) => sum + getLineGst(item), 0);
         const cost = formData.items.reduce((sum, item) => sum + getLineCost(item), 0);
-        return { revenue, cost, profit: revenue - cost };
+        return { revenue, gst, revenueWithGst: revenue + gst, cost, profit: revenue - cost };
     };
 
     // ────────────────────────────────────────
@@ -241,16 +257,29 @@ export const Sales = () => {
         try {
             const saleDate = new Date(formData.saleDate);
 
-            const saleItems = validItems.map(item => ({
-                productId: item.productId,
-                productName: item.productName,
-                quantity: parseInt(item.quantity),
-                sellingPrice: parseFloat(item.sellingPrice),
-                purchasePrice: item.purchasePrice || 0,
-                profit: (parseFloat(item.sellingPrice) - (item.purchasePrice || 0)) * parseInt(item.quantity),
-            }));
+            const saleItems = validItems.map(item => {
+                const qty = parseInt(item.quantity);
+                const sellPrice = parseFloat(item.sellingPrice);
+                const costPrice = item.purchasePrice || 0;
+                const lineRevenue = qty * sellPrice;
+                const gstRate = parseFloat(item.gstRate) || 0;
+                const gstAmount = (lineRevenue * gstRate) / 100;
+                return {
+                    productId: item.productId,
+                    productName: item.productName,
+                    quantity: qty,
+                    sellingPrice: sellPrice,
+                    purchasePrice: costPrice,
+                    gstRate: gstRate,
+                    hsnCode: item.hsnCode || '',
+                    sku: item.sku || '',
+                    gstAmount: gstAmount,
+                    profit: (sellPrice - costPrice) * qty,
+                };
+            });
 
             const totalRevenue = saleItems.reduce((sum, i) => sum + (i.sellingPrice * i.quantity), 0);
+            const totalGst = saleItems.reduce((sum, i) => sum + (i.gstAmount || 0), 0);
             const totalCost = saleItems.reduce((sum, i) => sum + (i.purchasePrice * i.quantity), 0);
             const totalProfit = totalRevenue - totalCost;
 
@@ -265,6 +294,8 @@ export const Sales = () => {
                 items: saleItems,
                 productIds: saleItems.map(i => i.productId), // for array-contains queries
                 totalRevenue,
+                totalGst,
+                totalWithGst: totalRevenue + totalGst,
                 totalCost,
                 totalProfit,
             };
@@ -878,6 +909,18 @@ export const Sales = () => {
                                         <div className="md:col-span-3">
                                             <div className="text-xs text-gray-500 mb-1">Summary</div>
                                             <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-xs space-y-1">
+                                                {item.gstRate > 0 && (
+                                                    <div className="flex justify-between text-blue-700">
+                                                        <span>GST ({item.gstRate}%):</span>
+                                                        <span className="font-medium">{formatCurrency(getLineGst(item))}</span>
+                                                    </div>
+                                                )}
+                                                {item.hsnCode && (
+                                                    <div className="flex justify-between">
+                                                        <span className="text-gray-400">HSN:</span>
+                                                        <span className="text-gray-600">{item.hsnCode}</span>
+                                                    </div>
+                                                )}
                                                 <div className="flex justify-between">
                                                     <span className="text-gray-500">Revenue:</span>
                                                     <span className="font-medium">{formatCurrency(getLineRevenue(item))}</span>
@@ -918,9 +961,23 @@ export const Sales = () => {
                             return (
                                 <>
                                     <div className="flex justify-between text-sm">
-                                        <span className="text-gray-600">Total Revenue:</span>
-                                        <span className="font-semibold text-success-600">
+                                        <span className="text-gray-600">Subtotal:</span>
+                                        <span className="font-semibold">
                                             {formatCurrency(totals.revenue)}
+                                        </span>
+                                    </div>
+                                    {totals.gst > 0 && (
+                                        <div className="flex justify-between text-sm text-blue-700">
+                                            <span>GST:</span>
+                                            <span className="font-medium">
+                                                +{formatCurrency(totals.gst)}
+                                            </span>
+                                        </div>
+                                    )}
+                                    <div className="flex justify-between text-sm">
+                                        <span className="text-gray-600">Total (incl. GST):</span>
+                                        <span className="font-semibold text-success-600">
+                                            {formatCurrency(totals.revenueWithGst)}
                                         </span>
                                     </div>
                                     <div className="flex justify-between text-sm">

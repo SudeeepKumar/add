@@ -126,16 +126,29 @@ export const Invoices = () => {
         const newItems = [...formData.items];
         newItems[index][field] = value;
 
-        // If product is selected, auto-fill description and price
+        // If product is selected, auto-fill description, price, and GST
         if (field === 'productId') {
             const product = products.find((p) => p.id === value);
             if (product) {
                 newItems[index].description = product.name;
-                newItems[index].price = product.sellingPrice;
+                newItems[index].price = product.sellingPrice || 0;
+                newItems[index].hsnCode = product.hsnCode || '';
+                newItems[index].sku = product.sku || '';
+                // Auto-fill GST rate from product (use product's GST if available)
+                if (product.gstRate !== undefined && product.gstRate !== null) {
+                    setFormData(prev => ({
+                        ...prev,
+                        gstRate: product.gstRate,
+                        items: newItems,
+                    }));
+                    return;
+                }
             } else if (value === '') {
                 // Allow clearing
                 newItems[index].description = '';
                 newItems[index].price = 0;
+                newItems[index].hsnCode = '';
+                newItems[index].sku = '';
             }
         }
 
