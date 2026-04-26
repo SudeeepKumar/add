@@ -12,7 +12,7 @@ import { Input } from '../components/common/Input';
 import { Select } from '../components/common/Select';
 import { EmptyState } from '../components/common/EmptyState';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { Plus, Pencil, Trash2, Receipt, Search, Filter, Calendar } from 'lucide-react';
+import { Plus, Pencil, Trash2, Receipt, Search, Filter, Calendar, AlertCircle } from 'lucide-react';
 import { formatCurrency } from '../utils/currencyUtils';
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, TRANSACTION_TYPES, GST_RATES, PAYMENT_METHODS } from '../utils/constants';
 import { format } from 'date-fns';
@@ -26,6 +26,7 @@ export const Transactions = () => {
     const [editingTransaction, setEditingTransaction] = useState(null);
     const [filterType, setFilterType] = useState('all');
     const [searchQuery, setSearchQuery] = useState('');
+    const [cleaningUp, setCleaningUp] = useState(false);
 
     // Date range filter
     const [dateFrom, setDateFrom] = useState('');
@@ -124,16 +125,144 @@ export const Transactions = () => {
     };
 
     const handleDelete = async (id) => {
-        if (!window.confirm('Are you sure you want to delete this transaction?')) {
+        // Find the transaction to check for linked records
+        const transaction = transactions.find(t => t.id === id);
+        const hasLinkedData = transaction?.referenceId;
+
+        const confirmMsg = hasLinkedData
+            ? 'Delete this transaction? This will also clean up linked sale/purchase records and restore inventory.'
+            : 'Are you sure you want to delete this transaction?';
+
+        if (!window.confirm(confirmMsg)) {
             return;
         }
 
         try {
+            // If transaction is linked to a sale, clean up the sale + restore inventory
+            if (transaction?.referenceId) {
+                try {
+                    const { deleteSale, subscribeToSales } = await import('../services/salesService');
+                    const { updateProduct } = await import('../services/productService');
+                    const { collection, doc, getDoc } = await import('firebase/firestore');
+                    const { db } = await import('../config/firebase');
+
+                    // Check if referenceId points to a sale
+                    const saleRef = doc(db, 'sales', transaction.referenceId);
+                    const saleSnap = await getDoc(saleRef);
+
+                    if (saleSnap.exists()) {
+                        const saleData = saleSnap.data();
+                        // Restore inventory for each product in the sale
+                        if (saleData.items && saleData.items.length > 0) {
+                            for (const item of saleData.items) {
+                                try {
+                                    const productRef = doc(db, 'products', item.productId);
+                                    const productSnap = await getDoc(productRef);
+                                    if (productSnap.exists()) {
+                                        await updateProduct(item.productId, {
+                                            quantity: (productSnap.data().quantity || 0) + item.quantity,
+                                        });
+                                    }
+                                } catch (err) {
+                                    console.warn('Could not restore stock for', item.productName, err);
+                                }
+                            }
+                        }
+                        // Delete the linked sale record
+                        await deleteSale(transaction.referenceId);
+                    }
+
+                    // Also check if referenceId points to a product (purchase transaction)
+                    // — for purchase transactions, we DON'T auto-reverse inventory 
+                    //   because the product edit/delete in Inventory page handles that.
+                    //   We just delete the transaction itself.
+                } catch (linkError) {
+                    console.warn('Could not clean up linked records:', linkError);
+                    // Continue with transaction deletion anyway
+                }
+            }
+
             await deleteTransaction(id);
-            toast.success('Transaction deleted successfully');
+            toast.success(
+                hasLinkedData
+                    ? 'Transaction deleted and linked records cleaned up'
+                    : 'Transaction deleted successfully'
+            );
         } catch (error) {
             console.error('Error deleting transaction:', error);
             toast.error('Failed to delete transaction');
+        }
+    };
+
+    // ── CLEAN UP ORPHANED TRANSACTIONS ──────────────
+    // Finds transactions with referenceId pointing to non-existent sales/products
+    // and deletes them automatically
+    const handleCleanupOrphans = async () => {
+        const linkedTransactions = transactions.filter(t => t.referenceId);
+        if (linkedTransactions.length === 0) {
+            toast.success('No linked transactions to check');
+            return;
+        }
+
+        if (!window.confirm(
+            `Check ${linkedTransactions.length} linked transaction(s) for orphaned records?\n\nOrphaned = linked to a sale/product that no longer exists.`
+        )) return;
+
+        setCleaningUp(true);
+        try {
+            const { doc, getDoc } = await import('firebase/firestore');
+            const { db } = await import('../config/firebase');
+
+            let orphanCount = 0;
+
+            for (const txn of linkedTransactions) {
+                let isOrphan = true;
+
+                // Check if referenceId exists in 'sales' collection
+                try {
+                    const saleSnap = await getDoc(doc(db, 'sales', txn.referenceId));
+                    if (saleSnap.exists()) {
+                        isOrphan = false;
+                    }
+                } catch (e) { /* not found */ }
+
+                // If not a sale, check if it's a product
+                if (isOrphan) {
+                    try {
+                        const productSnap = await getDoc(doc(db, 'products', txn.referenceId));
+                        if (productSnap.exists()) {
+                            isOrphan = false;
+                        }
+                    } catch (e) { /* not found */ }
+                }
+
+                // If not a sale or product, check invoices (legacy)
+                if (isOrphan) {
+                    try {
+                        const invSnap = await getDoc(doc(db, 'invoices', txn.referenceId));
+                        if (invSnap.exists()) {
+                            isOrphan = false;
+                        }
+                    } catch (e) { /* not found */ }
+                }
+
+                // Delete if orphaned
+                if (isOrphan) {
+                    await deleteTransaction(txn.id);
+                    orphanCount++;
+                }
+            }
+
+            if (orphanCount > 0) {
+                toast.success(`Cleaned up ${orphanCount} orphaned transaction${orphanCount > 1 ? 's' : ''}`);
+            } else {
+                toast.success('All linked transactions are valid — nothing to clean');
+            }
+        } catch (error) {
+            console.error('Cleanup error:', error);
+            toast.error('Failed to complete cleanup');
+        } finally {
+            setCleaningUp(false);
         }
     };
 
@@ -202,10 +331,24 @@ export const Transactions = () => {
                     <h1 className="text-3xl font-bold text-gray-900">Transactions</h1>
                     <p className="text-gray-600 mt-1">Track your income and expenses</p>
                 </div>
-                <Button onClick={() => handleOpenModal()} className="flex items-center gap-2">
-                    <Plus size={20} />
-                    Add Transaction
-                </Button>
+                <div className="flex items-center gap-2">
+                    {/* Cleanup orphaned transactions */}
+                    {transactions.some(t => t.referenceId) && (
+                        <button
+                            onClick={handleCleanupOrphans}
+                            disabled={cleaningUp}
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 transition-colors disabled:opacity-50"
+                            title="Remove transactions linked to deleted sales/invoices"
+                        >
+                            <AlertCircle size={16} />
+                            {cleaningUp ? 'Cleaning...' : 'Clean Orphans'}
+                        </button>
+                    )}
+                    <Button onClick={() => handleOpenModal()} className="flex items-center gap-2">
+                        <Plus size={20} />
+                        Add Transaction
+                    </Button>
+                </div>
             </div>
 
             {/* Filters */}
