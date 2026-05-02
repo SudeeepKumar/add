@@ -1,4 +1,5 @@
 rules_version = '2';
+// NOTE: Public read on individual invoices allows customers to view via shared link
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -26,7 +27,11 @@ service cloud.firestore {
 
     // Invoices collection
     match /invoices/{invoiceId} {
-      allow read, write: if isAuthenticated() && isOwner(resource.data.userId);
+      // Allow public read of individual invoices (for shared customer links)
+      allow get: if true;
+      // Listing all invoices requires authentication
+      allow list: if isAuthenticated() && isOwner(resource.data.userId);
+      allow write: if isAuthenticated() && isOwner(resource.data.userId);
       allow create: if isAuthenticated() && isOwner(request.resource.data.userId);
     }
 
@@ -44,7 +49,9 @@ service cloud.firestore {
 
     // Business Settings collection
     match /businessSettings/{userId} {
-      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+      // Allow public read (needed for public invoice page to show business info)
+      allow read: if true;
+      allow write: if isAuthenticated() && request.auth.uid == userId;
     }
 
     // Deny all other access

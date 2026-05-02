@@ -15,6 +15,7 @@ import { Reports } from './pages/Reports';
 import { Settings } from './pages/Settings';
 import { Suppliers } from './pages/Suppliers';
 import { BulkImport } from './pages/BulkImport';
+import { PublicInvoice } from './pages/PublicInvoice';
 
 function App() {
   return (
@@ -25,6 +26,9 @@ function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+
+          {/* Public Invoice View (accessible without login) */}
+          <Route path="/invoice/:invoiceId" element={<PublicInvoice />} />
 
           {/* Protected Routes */}
           <Route

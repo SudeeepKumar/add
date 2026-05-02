@@ -16,7 +16,7 @@ import { Select } from '../components/common/Select';
 import { SearchableSelect } from '../components/common/SearchableSelect';
 import { EmptyState } from '../components/common/EmptyState';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { Plus, Pencil, Trash2, FileText, Download, Search, Calendar } from 'lucide-react';
+import { Plus, Pencil, Trash2, FileText, Download, Search, Calendar, Mail, Send, Loader2, Share2, MessageCircle, X, Phone } from 'lucide-react';
 import { formatCurrency } from '../utils/currencyUtils';
 import { calculateTotalWithGST, calculateGST } from '../utils/taxCalculations';
 import { exportInvoicePDF } from '../utils/exportUtils';
@@ -34,11 +34,16 @@ export const Invoices = () => {
     const [searchQuery, setSearchQuery] = useState('');
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
+    const [sendingEmail, setSendingEmail] = useState(null); // tracks invoice ID being sent
+    const [shareModalOpen, setShareModalOpen] = useState(false);
+    const [sharingInvoice, setSharingInvoice] = useState(null);
+    const [shareEmailInput, setShareEmailInput] = useState('');
+    const [shareStep, setShareStep] = useState('choose'); // 'choose' | 'email-input'
 
     const [formData, setFormData] = useState({
         customerName: '',
         customerEmail: '',
-        customerAddress: '',
+        customerPhone: '',
         date: format(new Date(), 'yyyy-MM-dd'),
         dueDate: format(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'),
         items: [{ productId: '', description: '', quantity: 1, price: 0, discount: 0 }],
@@ -74,7 +79,7 @@ export const Invoices = () => {
         setFormData({
             customerName: '',
             customerEmail: '',
-            customerAddress: '',
+            customerPhone: '',
             date: format(new Date(), 'yyyy-MM-dd'),
             dueDate: format(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'),
             items: [{ productId: '', description: '', quantity: 1, price: 0, discount: 0 }],
@@ -91,7 +96,7 @@ export const Invoices = () => {
             setFormData({
                 customerName: invoice.customerName,
                 customerEmail: invoice.customerEmail || '',
-                customerAddress: invoice.customerAddress || '',
+                customerPhone: invoice.customerPhone || '',
                 date: format(invoice.date, 'yyyy-MM-dd'),
                 dueDate: format(invoice.dueDate, 'yyyy-MM-dd'),
                 items: invoice.items,
@@ -188,7 +193,7 @@ export const Invoices = () => {
             const invoiceData = {
                 customerName: formData.customerName,
                 customerEmail: formData.customerEmail,
-                customerAddress: formData.customerAddress,
+                customerPhone: formData.customerPhone,
                 date: new Date(formData.date),
                 dueDate: new Date(formData.dueDate),
                 items: formData.items,
@@ -236,6 +241,88 @@ export const Invoices = () => {
         } catch (error) {
             console.error('Error downloading PDF:', error);
             toast.error('Failed to download PDF');
+        }
+    };
+
+    // ── Share handlers ──
+    const handleOpenShare = (invoice) => {
+        setSharingInvoice(invoice);
+        setShareEmailInput(invoice.customerEmail || '');
+        setShareStep('choose');
+        setShareModalOpen(true);
+    };
+
+    const handleCloseShare = () => {
+        setShareModalOpen(false);
+        setSharingInvoice(null);
+        setShareEmailInput('');
+        setShareStep('choose');
+    };
+
+    const handleShareWhatsApp = () => {
+        if (!sharingInvoice) return;
+        const invoiceUrl = `${window.location.origin}/invoice/${sharingInvoice.id}`;
+        const message = `Hi ${sharingInvoice.customerName},\n\nHere is your invoice *${sharingInvoice.invoiceNumber}* for *${formatCurrency(sharingInvoice.total)}*.\n\nView & download: ${invoiceUrl}\n\nThank you!\n— ${businessSettings.businessName || 'BILLJI'}`;
+        const phone = (sharingInvoice.customerPhone || '').replace(/\D/g, '');
+        const waUrl = phone
+            ? `https://wa.me/${phone.startsWith('91') ? phone : '91' + phone}?text=${encodeURIComponent(message)}`
+            : `https://wa.me/?text=${encodeURIComponent(message)}`;
+        window.open(waUrl, '_blank');
+        handleCloseShare();
+        toast.success('Opening WhatsApp...');
+    };
+
+    const handleShareEmail = async () => {
+        const email = shareEmailInput.trim();
+        if (!email) {
+            toast.error('Please enter a valid email address');
+            return;
+        }
+        if (!isValidEmail(email)) {
+            toast.error('Please enter a valid email address');
+            return;
+        }
+
+        setSendingEmail(sharingInvoice.id);
+
+        try {
+            const invoiceUrl = `${window.location.origin}/invoice/${sharingInvoice.id}`;
+            const invoiceDate = sharingInvoice.date instanceof Date
+                ? sharingInvoice.date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                : new Date(sharingInvoice.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+            const dueDate = sharingInvoice.dueDate instanceof Date
+                ? sharingInvoice.dueDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                : new Date(sharingInvoice.dueDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+
+            const response = await fetch('/.netlify/functions/send-email', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    to_email: email,
+                    customer_name: sharingInvoice.customerName,
+                    invoice_number: sharingInvoice.invoiceNumber,
+                    invoice_date: invoiceDate,
+                    due_date: dueDate,
+                    total_amount: formatCurrency(sharingInvoice.total),
+                    invoice_url: invoiceUrl,
+                    business_name: businessSettings.businessName || 'BILLJI',
+                    status: (sharingInvoice.status || 'unpaid').toUpperCase(),
+                }),
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.error || 'Failed to send email');
+            }
+
+            toast.success(`Invoice emailed to ${email}`);
+            handleCloseShare();
+        } catch (error) {
+            console.error('Error sending email:', error);
+            toast.error(error.message || 'Failed to send email');
+        } finally {
+            setSendingEmail(null);
         }
     };
 
@@ -418,6 +505,13 @@ export const Invoices = () => {
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
                                             <button
+                                                onClick={() => handleOpenShare(invoice)}
+                                                className="text-green-600 hover:text-green-800"
+                                                title="Share Invoice"
+                                            >
+                                                <Share2 size={18} />
+                                            </button>
+                                            <button
                                                 onClick={() => handleDownloadPDF(invoice)}
                                                 className="text-primary-600 hover:text-primary-900"
                                                 title="Download PDF"
@@ -471,7 +565,7 @@ export const Invoices = () => {
                             placeholder="John Doe"
                         />
                         <Input
-                            label="Customer Email"
+                            label="Customer Email *"
                             type="email"
                             value={formData.customerEmail}
                             onChange={(e) => setFormData({ ...formData, customerEmail: e.target.value })}
@@ -480,10 +574,11 @@ export const Invoices = () => {
                     </div>
 
                     <Input
-                        label="Customer Address"
-                        value={formData.customerAddress}
-                        onChange={(e) => setFormData({ ...formData, customerAddress: e.target.value })}
-                        placeholder="123 Main St, City, State, ZIP"
+                        label="Customer Phone Number"
+                        type="tel"
+                        value={formData.customerPhone}
+                        onChange={(e) => setFormData({ ...formData, customerPhone: e.target.value })}
+                        placeholder="+91 98765 43210"
                     />
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -644,6 +739,117 @@ export const Invoices = () => {
                     </div>
                 </form>
             </Modal>
+
+            {/* Share Modal */}
+            {shareModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={handleCloseShare}>
+                    <div
+                        className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden animate-in"
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ animation: 'fadeInUp 0.25s ease-out' }}
+                    >
+                        {/* Header */}
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-green-50 to-blue-50">
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-900">Share Invoice</h3>
+                                <p className="text-sm text-gray-500">{sharingInvoice?.invoiceNumber}</p>
+                            </div>
+                            <button onClick={handleCloseShare} className="p-2 rounded-full hover:bg-gray-200 transition-colors">
+                                <X size={20} className="text-gray-500" />
+                            </button>
+                        </div>
+
+                        {shareStep === 'choose' ? (
+                            <div className="p-6 space-y-3">
+                                <p className="text-sm text-gray-600 mb-4">Choose how you'd like to share this invoice:</p>
+
+                                {/* WhatsApp Option */}
+                                <button
+                                    onClick={handleShareWhatsApp}
+                                    className="w-full flex items-center gap-4 p-4 rounded-xl border-2 border-gray-100 hover:border-green-400 hover:bg-green-50 transition-all duration-200 group"
+                                >
+                                    <div className="w-12 h-12 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                                        <MessageCircle size={24} className="text-white" />
+                                    </div>
+                                    <div className="text-left">
+                                        <p className="font-semibold text-gray-900">WhatsApp</p>
+                                        <p className="text-sm text-gray-500">Share via WhatsApp message</p>
+                                    </div>
+                                </button>
+
+                                {/* Email Option */}
+                                <button
+                                    onClick={() => setShareStep('email-input')}
+                                    className="w-full flex items-center gap-4 p-4 rounded-xl border-2 border-gray-100 hover:border-blue-400 hover:bg-blue-50 transition-all duration-200 group"
+                                >
+                                    <div className="w-12 h-12 rounded-full bg-blue-500 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                                        <Mail size={24} className="text-white" />
+                                    </div>
+                                    <div className="text-left">
+                                        <p className="font-semibold text-gray-900">Email</p>
+                                        <p className="text-sm text-gray-500">Send invoice link via email</p>
+                                    </div>
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="p-6 space-y-4">
+                                <button
+                                    onClick={() => setShareStep('choose')}
+                                    className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                                >
+                                    ← Back
+                                </button>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Customer Email Address
+                                    </label>
+                                    <input
+                                        type="email"
+                                        value={shareEmailInput}
+                                        onChange={(e) => setShareEmailInput(e.target.value)}
+                                        placeholder="customer@example.com"
+                                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                                        autoFocus
+                                    />
+                                </div>
+
+                                <button
+                                    onClick={handleShareEmail}
+                                    disabled={sendingEmail}
+                                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {sendingEmail ? (
+                                        <>
+                                            <Loader2 size={18} className="animate-spin" />
+                                            Sending...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Send size={18} />
+                                            Send Email
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Share Modal Animation */}
+            <style>{`
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(20px) scale(0.97);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0) scale(1);
+                    }
+                }
+            `}</style>
         </div>
     );
 };

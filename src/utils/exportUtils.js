@@ -272,7 +272,7 @@ export const exportInvoicePDF = (invoice, businessSettings = {}) => {
     fromLines.push({ text: 'From:', bold: true, size: 9 });
     fromLines.push({ text: businessSettings.businessName || 'BILLJI', bold: true, size: 11 });
     if (businessSettings.address) fromLines.push({ text: businessSettings.address, bold: false, size: 9 });
-    if (businessSettings.phone) fromLines.push({ text: 'Phone: ' + businessSettings.phone, bold: false, size: 9 });
+    // Phone number intentionally excluded from customer-facing invoice PDF
     if (businessSettings.email) fromLines.push({ text: 'Email: ' + businessSettings.email, bold: false, size: 9 });
     if (businessSettings.gstNumber) fromLines.push({ text: 'GST: ' + businessSettings.gstNumber, bold: false, size: 9 });
 
@@ -340,7 +340,7 @@ export const exportInvoicePDF = (invoice, businessSettings = {}) => {
     const billLines = [];
     billLines.push({ text: 'Bill To:', bold: true, size: 10 });
     if (invoice.customerName) billLines.push({ text: invoice.customerName, bold: true, size: 11 });
-    if (invoice.customerAddress) billLines.push({ text: invoice.customerAddress, bold: false, size: 9 });
+    if (invoice.customerPhone) billLines.push({ text: 'Phone: ' + invoice.customerPhone, bold: false, size: 9 });
     if (invoice.customerEmail) billLines.push({ text: invoice.customerEmail, bold: false, size: 9 });
 
     // Calculate height
