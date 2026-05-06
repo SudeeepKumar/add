@@ -204,7 +204,7 @@ export const exportProfitLossPDF = (data, dateRange) => {
 /**
  * Export invoice to PDF — Professional A4 GST Tax Invoice
  */
-export const exportInvoicePDF = (invoice, businessSettings = {}) => {
+export const exportInvoicePDF = (invoice, businessSettings = {}, options = {}) => {
     const doc = new jsPDF('p', 'mm', 'a4');
     const pw = doc.internal.pageSize.getWidth();   // 210
     const ph = doc.internal.pageSize.getHeight();  // 297
@@ -603,6 +603,13 @@ export const exportInvoicePDF = (invoice, businessSettings = {}) => {
     // Thin accent line at the very bottom
     doc.setFillColor(...accent);
     doc.rect(0, ph - 2, pw, 2, 'F');
+
+    // If returnBlob is requested, return the PDF data instead of downloading
+    if (options && options.returnBlob) {
+        const pdfBlob = doc.output('blob');
+        const pdfBase64 = doc.output('datauristring').split(',')[1]; // base64 without prefix
+        return { blob: pdfBlob, base64: pdfBase64, filename: 'invoice-' + invoice.invoiceNumber + '.pdf' };
+    }
 
     doc.save('invoice-' + invoice.invoiceNumber + '.pdf');
 };

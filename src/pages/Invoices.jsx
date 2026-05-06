@@ -259,17 +259,60 @@ export const Invoices = () => {
         setShareStep('choose');
     };
 
-    const handleShareWhatsApp = () => {
+    const handleShareWhatsApp = async () => {
         if (!sharingInvoice) return;
+
         const invoiceUrl = `${window.location.origin}/invoice/${sharingInvoice.id}`;
         const message = `Hi ${sharingInvoice.customerName},\n\nHere is your invoice *${sharingInvoice.invoiceNumber}* for *${formatCurrency(sharingInvoice.total)}*.\n\nView & download: ${invoiceUrl}\n\nThank you!\n— ${businessSettings.businessName || 'BILLJI'}`;
+
+        // Generate PDF in memory
+        const pdfData = exportInvoicePDF(sharingInvoice, businessSettings, { returnBlob: true });
+        const pdfFile = new File([pdfData.blob], pdfData.filename, { type: 'application/pdf' });
+
+        try {
+            // Try Web Share API with file (works on mobile — shares PDF directly)
+            if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+                await navigator.share({
+                    title: `Invoice ${sharingInvoice.invoiceNumber}`,
+                    text: message,
+                    files: [pdfFile],
+                });
+                handleCloseShare();
+                toast.success('Invoice shared!');
+                return;
+            }
+        } catch (err) {
+            // User cancelled share — stop
+            if (err.name === 'AbortError') {
+                handleCloseShare();
+                return;
+            }
+            console.warn('Web Share not available, falling back to download + WhatsApp link:', err);
+        }
+
+        // Fallback for desktop: download the PDF first, then open WhatsApp
+        // Step 1: Auto-download the PDF so user has the bill copy
+        const downloadLink = document.createElement('a');
+        downloadLink.href = URL.createObjectURL(pdfData.blob);
+        downloadLink.download = pdfData.filename;
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        document.body.removeChild(downloadLink);
+        URL.revokeObjectURL(downloadLink.href);
+
+        // Step 2: Open WhatsApp with the message
         const phone = (sharingInvoice.customerPhone || '').replace(/\D/g, '');
         const waUrl = phone
             ? `https://wa.me/${phone.startsWith('91') ? phone : '91' + phone}?text=${encodeURIComponent(message)}`
             : `https://wa.me/?text=${encodeURIComponent(message)}`;
-        window.open(waUrl, '_blank');
+
+        // Small delay so the download starts before opening WhatsApp
+        setTimeout(() => {
+            window.open(waUrl, '_blank');
+        }, 500);
+
         handleCloseShare();
-        toast.success('Opening WhatsApp...');
+        toast.success('PDF downloaded! Attach it in WhatsApp 📎', { duration: 5000 });
     };
 
     const handleShareEmail = async () => {
@@ -294,6 +337,9 @@ export const Invoices = () => {
                 ? sharingInvoice.dueDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
                 : new Date(sharingInvoice.dueDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 
+            // Generate PDF in memory and get base64
+            const pdfData = exportInvoicePDF(sharingInvoice, businessSettings, { returnBlob: true });
+
             const response = await fetch('/.netlify/functions/send-email', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -307,6 +353,8 @@ export const Invoices = () => {
                     invoice_url: invoiceUrl,
                     business_name: businessSettings.businessName || 'BILLJI',
                     status: (sharingInvoice.status || 'unpaid').toUpperCase(),
+                    pdf_base64: pdfData.base64,
+                    pdf_filename: pdfData.filename,
                 }),
             });
 
@@ -316,7 +364,7 @@ export const Invoices = () => {
                 throw new Error(result.error || 'Failed to send email');
             }
 
-            toast.success(`Invoice emailed to ${email}`);
+            toast.success(`Invoice with PDF emailed to ${email}`);
             handleCloseShare();
         } catch (error) {
             console.error('Error sending email:', error);
@@ -780,7 +828,7 @@ export const Invoices = () => {
                                     </div>
                                     <div className="text-left">
                                         <p className="font-semibold text-gray-900">WhatsApp</p>
-                                        <p className="text-sm text-gray-500">Share via WhatsApp message</p>
+                                        <p className="text-sm text-gray-500">Share PDF via WhatsApp</p>
                                     </div>
                                 </button>
 
@@ -794,7 +842,7 @@ export const Invoices = () => {
                                     </div>
                                     <div className="text-left">
                                         <p className="font-semibold text-gray-900">Email</p>
-                                        <p className="text-sm text-gray-500">Send invoice link via email</p>
+                                        <p className="text-sm text-gray-500">Send PDF copy via email</p>
                                     </div>
                                 </button>
                             </div>

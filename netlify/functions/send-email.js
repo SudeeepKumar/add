@@ -25,6 +25,8 @@ exports.handler = async (event) => {
             invoice_url,
             business_name,
             status,
+            pdf_base64,
+            pdf_filename,
         } = JSON.parse(event.body);
 
         if (!to_email) {
@@ -56,7 +58,7 @@ exports.handler = async (event) => {
                 Hi <strong>${customer_name || 'Customer'}</strong>,
             </p>
             <p style="margin:0 0 24px;color:#475569;font-size:14px;line-height:1.6;">
-                Here is your invoice from <strong>${business_name || 'BILLJI'}</strong>. Please find the details below:
+                Here is your invoice from <strong>${business_name || 'BILLJI'}</strong>. ${pdf_base64 ? 'A copy of the invoice PDF is attached for your records.' : 'Please find the details below:'}
             </p>
 
             <!-- Invoice Details Card -->
@@ -93,12 +95,12 @@ exports.handler = async (event) => {
             <!-- CTA Button -->
             <div style="text-align:center;margin-bottom:24px;">
                 <a href="${invoice_url}" style="display:inline-block;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#ffffff;padding:14px 36px;border-radius:12px;text-decoration:none;font-size:14px;font-weight:600;box-shadow:0 4px 12px rgba(37,99,235,0.3);">
-                    View Invoice
+                    View Invoice Online
                 </a>
             </div>
 
             <p style="margin:0;color:#94a3b8;font-size:12px;text-align:center;line-height:1.6;">
-                You can view and download your invoice anytime using the link above.
+                ${pdf_base64 ? 'The invoice PDF is attached to this email. You can also view it online using the button above.' : 'You can view and download your invoice anytime using the link above.'}
             </p>
         </div>
 
@@ -112,12 +114,25 @@ exports.handler = async (event) => {
 </body>
 </html>`;
 
-        const { data, error } = await resend.emails.send({
+        // Build email options
+        const emailOptions = {
             from: `${business_name || 'BILLJI'} <onboarding@resend.dev>`,
             to: [to_email],
             subject: `Invoice ${invoice_number} from ${business_name || 'BILLJI'} — ${total_amount}`,
             html: htmlContent,
-        });
+        };
+
+        // Attach PDF if provided
+        if (pdf_base64) {
+            emailOptions.attachments = [
+                {
+                    filename: pdf_filename || `invoice-${invoice_number}.pdf`,
+                    content: Buffer.from(pdf_base64, 'base64'),
+                },
+            ];
+        }
+
+        const { data, error } = await resend.emails.send(emailOptions);
 
         if (error) {
             console.error('Resend error:', error);
