@@ -16,7 +16,7 @@ import { Select } from '../components/common/Select';
 import { SearchableSelect } from '../components/common/SearchableSelect';
 import { EmptyState } from '../components/common/EmptyState';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { Plus, Pencil, Trash2, FileText, Download, Search, Calendar, Mail, Send, Loader2, Share2, MessageCircle, X, Phone } from 'lucide-react';
+import { Plus, Pencil, Trash2, FileText, Download, Search, Calendar, Mail, Send, Loader2, Share2, MessageCircle, X, Phone, Eye } from 'lucide-react';
 import { formatCurrency } from '../utils/currencyUtils';
 import { calculateTotalWithGST, calculateGST } from '../utils/taxCalculations';
 import { exportInvoicePDF } from '../utils/exportUtils';
@@ -504,6 +504,13 @@ export const Invoices = () => {
                                             </span>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                                            <button
+                                                onClick={() => window.open(`/invoice/${invoice.id}`, '_blank')}
+                                                className="text-violet-600 hover:text-violet-800"
+                                                title="Preview Invoice"
+                                            >
+                                                <Eye size={18} />
+                                            </button>
                                             <button
                                                 onClick={() => handleOpenShare(invoice)}
                                                 className="text-green-600 hover:text-green-800"

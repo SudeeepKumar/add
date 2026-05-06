@@ -36,12 +36,10 @@ export const exportProfitLossPDF = (data, dateRange) => {
     const green = [39, 174, 96];
     const red = [231, 76, 60];
 
-    // Format number without any symbol
+    // Format number without any symbol (Indian 2,1,2 grouping)
     const fmt = (v) => {
         const n = parseFloat(v) || 0;
-        const parts = n.toFixed(2).split('.');
-        parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-        return parts.join('.');
+        return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     };
 
     // ── HEADER BAR ──
@@ -204,275 +202,439 @@ export const exportProfitLossPDF = (data, dateRange) => {
 };
 
 /**
- * Export invoice to PDF — Professional Modern Design
+ * Export invoice to PDF — Professional A4 GST Tax Invoice
  */
 export const exportInvoicePDF = (invoice, businessSettings = {}) => {
-    const doc = new jsPDF();
-    const pw = doc.internal.pageSize.getWidth();   // page width
-    const ph = doc.internal.pageSize.getHeight();  // page height
-    const m = 14;                                  // margin
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const pw = doc.internal.pageSize.getWidth();   // 210
+    const ph = doc.internal.pageSize.getHeight();  // 297
+    const m = 12;                                  // margin
+    const contentW = pw - m * 2;                   // usable width
 
-    // ── Colors ──
-    const blue = [41, 128, 185];
-    const dark = [40, 40, 40];
-    const gray = [120, 120, 120];
-    const bgGray = [245, 247, 250];
+    // ── Color Palette ──
+    const navy     = [26, 35, 66];
+    const accent   = [37, 99, 235];
+    const dark     = [33, 33, 33];
+    const mid      = [100, 100, 100];
+    const light    = [160, 160, 160];
+    const bgLight  = [248, 249, 252];
+    const borderC  = [210, 215, 225];
+    const white    = [255, 255, 255];
 
-    // ── Helpers ──
+    // ── Helpers ── (Indian 2,1,2 grouping)
     const money = (v) => {
         const n = parseFloat(v) || 0;
-        const parts = n.toFixed(2).split('.');
-        parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-        return parts.join('.');
+        return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     };
 
     const fmtDate = (d) => {
-        if (!d) return '';
-        const dt = typeof d === 'string' ? new Date(d) : d;
+        if (!d) return '—';
+        const dt = typeof d === 'string' ? new Date(d) : (d.toDate ? d.toDate() : d);
         return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
     };
 
-    // ══════════════════════════════════════════════
-    //  HEADER — Blue bar with company name + INVOICE
-    // ══════════════════════════════════════════════
-    doc.setFillColor(...blue);
-    doc.rect(0, 0, pw, 36, 'F');
+    const drawLine = (x1, y1, x2, y2, color = borderC, width = 0.3) => {
+        doc.setDrawColor(...color);
+        doc.setLineWidth(width);
+        doc.line(x1, y1, x2, y2);
+    };
 
-    doc.setTextColor(255, 255, 255);
+    const drawRect = (x, y, w, h, fill = bgLight, stroke = borderC) => {
+        doc.setFillColor(...fill);
+        doc.setDrawColor(...stroke);
+        doc.setLineWidth(0.3);
+        doc.rect(x, y, w, h, 'FD');
+    };
+
+    // ═══════════════════════════════════════════════════
+    //  SECTION 1 — HEADER
+    // ═══════════════════════════════════════════════════
+
+    // Top accent line
+    doc.setFillColor(...accent);
+    doc.rect(0, 0, pw, 3, 'F');
+
+    let y = 10;
+
+    // Company Name (large, bold)
+    doc.setFontSize(18);
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(...navy);
+    doc.text(businessSettings.businessName || 'BILLJI', m, y + 6);
+
+    // "TAX INVOICE" title — right aligned
     doc.setFontSize(22);
     doc.setFont(undefined, 'bold');
-    doc.text(businessSettings.businessName || '', m, 17);
+    doc.setTextColor(...accent);
+    doc.text('TAX INVOICE', pw - m, y + 6, { align: 'right' });
 
-    doc.setFontSize(9);
-    doc.setFont(undefined, 'normal');
-    doc.text('Powered By BILLJI', m, 25);
+    y += 12;
 
-    doc.setFontSize(5);
-    doc.setFont(undefined, 'normal');
-    doc.text('A Product Of Sudeepta Kumar Panda', m, 28);
-
-    doc.setFontSize(24);
-    doc.setFont(undefined, 'bold');
-    doc.text('INVOICE', pw - m, 20, { align: 'right' });
-
-    // ══════════════════════════════════════════════
-    //  FROM BOX — Left side (Business details)
-    // ══════════════════════════════════════════════
-    const fromX = m;
-    const fromY = 44;
-    const fromW = 90;
-    const pad = 6;
-    let ty = fromY + pad + 4;  // text y cursor
-
-    // We'll draw the box AFTER we know how tall the content is
-    // So first, calculate content, then draw
-
-    // -- Collect "From" content lines --
-    const fromLines = [];
-    fromLines.push({ text: 'From:', bold: true, size: 9 });
-    fromLines.push({ text: businessSettings.businessName || 'BILLJI', bold: true, size: 11 });
-    if (businessSettings.address) fromLines.push({ text: businessSettings.address, bold: false, size: 9 });
-    // Phone number intentionally excluded from customer-facing invoice PDF
-    if (businessSettings.email) fromLines.push({ text: 'Email: ' + businessSettings.email, bold: false, size: 9 });
-    if (businessSettings.gstNumber) fromLines.push({ text: 'GST: ' + businessSettings.gstNumber, bold: false, size: 9 });
-
-    // Calculate height
-    let fromH = pad * 2; // top + bottom padding
-    fromLines.forEach(l => { fromH += (l.size === 11 ? 7 : 5); });
-
-    // Draw box
-    doc.setFillColor(...bgGray);
-    doc.roundedRect(fromX, fromY, fromW, fromH, 2, 2, 'F');
-
-    // Render text
-    doc.setTextColor(...dark);
-    fromLines.forEach(l => {
-        doc.setFontSize(l.size);
-        doc.setFont(undefined, l.bold ? 'bold' : 'normal');
-        doc.text(l.text, fromX + pad, ty);
-        ty += (l.size === 11 ? 7 : 5);
-    });
-
-    // ══════════════════════════════════════════════
-    //  INVOICE DETAILS BOX — Right side
-    // ══════════════════════════════════════════════
-    const invBoxW = 55;
-    const invBoxX = pw - m - invBoxW;
-    const invBoxY = fromY;
-
-    doc.setFillColor(...bgGray);
-    doc.roundedRect(invBoxX, invBoxY, invBoxW, 38, 2, 2, 'F');
-
-    // Invoice # label
+    // Company details — left side
     doc.setFontSize(8);
-    doc.setFont(undefined, 'bold');
-    doc.setTextColor(...gray);
-    doc.text('Invoice #', invBoxX + 5, invBoxY + 7);
-
-    // Invoice # value (below label)
-    doc.setTextColor(...dark);
     doc.setFont(undefined, 'normal');
-    doc.setFontSize(8);
-    doc.text(invoice.invoiceNumber || 'N/A', invBoxX + 5, invBoxY + 13);
+    doc.setTextColor(...mid);
 
-    // Date label
-    doc.setFontSize(8);
+    let leftY = y;
+    if (businessSettings.address) {
+        const addressLines = doc.splitTextToSize(businessSettings.address, 90);
+        doc.text(addressLines, m, leftY);
+        leftY += addressLines.length * 3.5;
+    }
+    if (businessSettings.gstNumber) {
+        doc.setFont(undefined, 'bold');
+        doc.setTextColor(...dark);
+        doc.text('GSTIN: ' + businessSettings.gstNumber, m, leftY + 1);
+        doc.setFont(undefined, 'normal');
+        doc.setTextColor(...mid);
+        leftY += 4;
+    }
+    if (businessSettings.phone) {
+        doc.text('Phone: ' + businessSettings.phone, m, leftY + 1);
+        leftY += 3.5;
+    }
+    if (businessSettings.email) {
+        doc.text('Email: ' + businessSettings.email, m, leftY + 1);
+        leftY += 3.5;
+    }
+
+    // Separator line below header
+    y = Math.max(leftY, y) + 4;
+    drawLine(m, y, pw - m, y, navy, 0.5);
+
+    // ═══════════════════════════════════════════════════
+    //  SECTION 2 — INVOICE INFO + BILL TO (side by side)
+    // ═══════════════════════════════════════════════════
+
+    y += 4;
+    const infoBlockY = y;
+    const halfW = (contentW - 6) / 2;
+
+    // ── LEFT: Bill To ──
+    drawRect(m, infoBlockY, halfW, 30);
+
+    doc.setFontSize(7);
     doc.setFont(undefined, 'bold');
-    doc.setTextColor(...gray);
-    doc.text('Date', invBoxX + 5, invBoxY + 23);
+    doc.setTextColor(...accent);
+    doc.text('BILL TO', m + 4, infoBlockY + 5);
 
-    // Date value (below label)
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'bold');
     doc.setTextColor(...dark);
+    doc.text(invoice.customerName || '—', m + 4, infoBlockY + 11);
+
+    doc.setFontSize(8);
     doc.setFont(undefined, 'normal');
-    doc.setFontSize(9);
-    doc.text(fmtDate(invoice.date), invBoxX + 5, invBoxY + 30);
+    doc.setTextColor(...mid);
+    let billLineY = infoBlockY + 16;
+    if (invoice.customerPhone) {
+        doc.text('Phone: ' + invoice.customerPhone, m + 4, billLineY);
+        billLineY += 4;
+    }
+    if (invoice.customerEmail) {
+        doc.text('Email: ' + invoice.customerEmail, m + 4, billLineY);
+        billLineY += 4;
+    }
 
-    // ══════════════════════════════════════════════
-    //  BILL TO BOX — Full width below From box
-    // ══════════════════════════════════════════════
-    const billY = fromY + fromH + 10;
-    const billX = m;
-    const billW = pw - (m * 2);
-    const billPad = 6;
-    let bty = billY + billPad + 4; // bill text y cursor
+    // ── RIGHT: Invoice Details ──
+    const rightX = m + halfW + 6;
+    drawRect(rightX, infoBlockY, halfW, 30);
 
-    // Collect Bill To lines
-    const billLines = [];
-    billLines.push({ text: 'Bill To:', bold: true, size: 10 });
-    if (invoice.customerName) billLines.push({ text: invoice.customerName, bold: true, size: 11 });
-    if (invoice.customerPhone) billLines.push({ text: 'Phone: ' + invoice.customerPhone, bold: false, size: 9 });
-    if (invoice.customerEmail) billLines.push({ text: invoice.customerEmail, bold: false, size: 9 });
+    // Invoice number
+    doc.setFontSize(7);
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(...accent);
+    doc.text('INVOICE DETAILS', rightX + 4, infoBlockY + 5);
 
-    // Calculate height
-    let billH = billPad * 2;
-    billLines.forEach(l => { billH += (l.size >= 10 ? 7 : 5); });
+    doc.setFontSize(8);
+    doc.setFont(undefined, 'normal');
+    doc.setTextColor(...mid);
 
-    // Draw box
-    doc.setFillColor(...bgGray);
-    doc.roundedRect(billX, billY, billW, billH, 2, 2, 'F');
+    const detailLabelX = rightX + 4;
+    const detailValueX = rightX + halfW - 4;
+    let dY = infoBlockY + 11;
 
-    // Render text
+    doc.text('Invoice No:', detailLabelX, dY);
+    doc.setFont(undefined, 'bold');
     doc.setTextColor(...dark);
-    billLines.forEach(l => {
-        doc.setFontSize(l.size);
-        doc.setFont(undefined, l.bold ? 'bold' : 'normal');
-        doc.text(l.text, billX + billPad, bty);
-        bty += (l.size >= 10 ? 7 : 5);
-    });
+    doc.text(invoice.invoiceNumber || 'N/A', detailValueX, dY, { align: 'right' });
 
-    // ══════════════════════════════════════════════
-    //  ITEMS TABLE
-    // ══════════════════════════════════════════════
-    const tableY = billY + billH + 10;
+    dY += 5;
+    doc.setFont(undefined, 'normal');
+    doc.setTextColor(...mid);
+    doc.text('Date:', detailLabelX, dY);
+    doc.setTextColor(...dark);
+    doc.text(fmtDate(invoice.date), detailValueX, dY, { align: 'right' });
 
-    const rows = invoice.items.map(item => {
-        const total = (item.quantity * item.price) - (item.discount || 0);
+    dY += 5;
+    doc.setTextColor(...mid);
+    doc.text('Due Date:', detailLabelX, dY);
+    doc.setTextColor(...dark);
+    doc.text(fmtDate(invoice.dueDate), detailValueX, dY, { align: 'right' });
+
+    dY += 5;
+    doc.setTextColor(...mid);
+    doc.text('Status:', detailLabelX, dY);
+    const statusText = (invoice.status || 'unpaid').toUpperCase();
+    const statusColor = invoice.status === 'paid' ? [22, 163, 74] : invoice.status === 'overdue' ? [220, 38, 38] : [234, 88, 12];
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(...statusColor);
+    doc.text(statusText, detailValueX, dY, { align: 'right' });
+
+    y = infoBlockY + 34;
+
+    // ═══════════════════════════════════════════════════
+    //  SECTION 3 — PRODUCT TABLE
+    // ═══════════════════════════════════════════════════
+
+    const rows = invoice.items.map((item, idx) => {
+        const qty = parseFloat(item.quantity) || 0;
+        const price = parseFloat(item.price) || 0;
+        const discount = parseFloat(item.discount) || 0;
+        const lineTotal = (qty * price) - discount;
         return [
-            item.description || '',
-            String(item.quantity),
-            money(item.price),
-            item.discount ? money(item.discount) : '-',
-            money(total)
+            String(idx + 1),
+            item.description || '—',
+            item.hsnCode || '—',
+            String(qty),
+            money(price),
+            (invoice.gstRate || 0) + '%',
+            money(lineTotal)
         ];
     });
 
     doc.autoTable({
-        startY: tableY,
-        head: [['Description', 'Qty', 'Unit Price', 'Discount', 'Amount']],
+        startY: y,
+        head: [['#', 'Item Description', 'HSN Code', 'Qty', 'Unit Price', 'GST %', 'Amount']],
         body: rows,
         theme: 'grid',
         margin: { left: m, right: m },
+        styles: {
+            fontSize: 8,
+            cellPadding: 3,
+            lineColor: borderC,
+            lineWidth: 0.3,
+            textColor: dark,
+        },
         headStyles: {
-            fillColor: blue,
-            textColor: [255, 255, 255],
+            fillColor: navy,
+            textColor: white,
             fontStyle: 'bold',
-            fontSize: 10,
+            fontSize: 7.5,
             halign: 'center',
-            cellPadding: 4
+            cellPadding: 3.5,
         },
         columnStyles: {
-            0: { cellWidth: 65, halign: 'left' },
-            1: { cellWidth: 20, halign: 'center' },
-            2: { cellWidth: 32, halign: 'right' },
-            3: { cellWidth: 28, halign: 'right' },
-            4: { cellWidth: 35, halign: 'right' }
-        },
-        bodyStyles: {
-            fontSize: 9,
-            textColor: dark,
-            cellPadding: 4
+            0: { cellWidth: 10, halign: 'center' },
+            1: { cellWidth: 52, halign: 'left' },
+            2: { cellWidth: 24, halign: 'center' },
+            3: { cellWidth: 14, halign: 'center' },
+            4: { cellWidth: 28, halign: 'right' },
+            5: { cellWidth: 18, halign: 'center' },
+            6: { cellWidth: 30, halign: 'right', fontStyle: 'bold' },
         },
         alternateRowStyles: {
-            fillColor: [250, 250, 250]
-        }
+            fillColor: [245, 247, 252],
+        },
+        bodyStyles: {
+            fontSize: 8,
+        },
     });
 
-    // ══════════════════════════════════════════════
-    //  TOTALS — Gray box + Blue total bar
-    // ══════════════════════════════════════════════
-    const tStartY = doc.lastAutoTable.finalY + 8;
-    const tWidth = 85;
-    const tX = pw - m - tWidth;
-    const labelX = tX + 6;
-    const valX = pw - m - 6;
+    y = doc.lastAutoTable.finalY;
 
-    // Gray background for Subtotal + GST
-    doc.setFillColor(...bgGray);
-    doc.rect(tX, tStartY, tWidth, 22, 'F');
+    // ═══════════════════════════════════════════════════
+    //  SECTION 4 — SUMMARY (right-aligned block)
+    // ═══════════════════════════════════════════════════
 
-    let cy = tStartY + 8;
-    doc.setFontSize(10);
+    y += 4;
+    const sumW = 80;
+    const sumX = pw - m - sumW;
+    const labelColX = sumX + 5;
+    const valueColX = pw - m - 5;
+
+    // Subtotal row
+    drawRect(sumX, y, sumW, 8, bgLight, borderC);
+    doc.setFontSize(8);
     doc.setFont(undefined, 'normal');
+    doc.setTextColor(...mid);
+    doc.text('Subtotal', labelColX, y + 5.5);
     doc.setTextColor(...dark);
+    doc.text(money(invoice.subtotal), valueColX, y + 5.5, { align: 'right' });
 
-    doc.text('Subtotal:', labelX, cy);
-    doc.text(money(invoice.subtotal), valX, cy, { align: 'right' });
+    y += 8;
 
-    cy += 8;
-    doc.text('GST (' + (invoice.gstRate || 0) + '%):', labelX, cy);
-    doc.text(money(invoice.gstAmount), valX, cy, { align: 'right' });
+    // GST row
+    drawRect(sumX, y, sumW, 8, bgLight, borderC);
+    doc.setTextColor(...mid);
+    doc.text('GST (' + (invoice.gstRate || 0) + '%)', labelColX, y + 5.5);
+    doc.setTextColor(...dark);
+    doc.text(money(invoice.gstAmount), valueColX, y + 5.5, { align: 'right' });
 
-    // Blue TOTAL bar
-    const barY = tStartY + 22;
-    const barH = 13;
-    doc.setFillColor(...blue);
-    doc.rect(tX, barY, tWidth, barH, 'F');
+    y += 8;
 
-    doc.setFontSize(12);
+    // Grand Total row (highlighted)
+    doc.setFillColor(...navy);
+    doc.setDrawColor(...navy);
+    doc.setLineWidth(0.3);
+    doc.rect(sumX, y, sumW, 10, 'FD');
+
+    doc.setFontSize(10);
     doc.setFont(undefined, 'bold');
-    doc.setTextColor(255, 255, 255);
-    doc.text('TOTAL:', labelX, barY + 9);
-    doc.text(money(invoice.total), valX, barY + 9, { align: 'right' });
+    doc.setTextColor(...white);
+    doc.text('GRAND TOTAL', labelColX, y + 7);
+    doc.text(money(invoice.total), valueColX, y + 7, { align: 'right' });
 
-    // ══════════════════════════════════════════════
-    //  NOTES (if any)
-    // ══════════════════════════════════════════════
+    y += 14;
+
+    // Amount in words
+    doc.setFontSize(7);
+    doc.setFont(undefined, 'italic');
+    doc.setTextColor(...mid);
+    const totalInWords = numberToWords(parseFloat(invoice.total) || 0);
+    doc.text('Amount in words: ' + totalInWords + ' Only', m, y + 2);
+
+    y += 8;
+
+    // ═══════════════════════════════════════════════════
+    //  SECTION 5 — PAYMENT INFO (if notes exist, use notes)
+    // ═══════════════════════════════════════════════════
+
     if (invoice.notes && invoice.notes.trim()) {
-        const notesY = barY + barH + 15;
-        doc.setTextColor(...dark);
-        doc.setFontSize(9);
+        drawLine(m, y, pw - m, y, borderC, 0.3);
+        y += 4;
+
+        doc.setFontSize(8);
         doc.setFont(undefined, 'bold');
-        doc.text('Notes:', m, notesY);
-        doc.setFont(undefined, 'italic');
-        const nl = doc.splitTextToSize(invoice.notes, pw - (m * 2));
-        doc.text(nl, m, notesY + 5);
+        doc.setTextColor(...navy);
+        doc.text('PAYMENT NOTES', m, y + 1);
+        y += 5;
+
+        doc.setFont(undefined, 'normal');
+        doc.setFontSize(7.5);
+        doc.setTextColor(...mid);
+        const noteLines = doc.splitTextToSize(invoice.notes, contentW);
+        doc.text(noteLines, m, y);
+        y += noteLines.length * 3.5 + 3;
     }
 
-    // ══════════════════════════════════════════════
-    //  FOOTER
-    // ══════════════════════════════════════════════
-    doc.setFontSize(9);
-    doc.setFont(undefined, 'italic');
-    doc.setTextColor(...gray);
-    doc.text('Thank you for your business!', pw / 2, ph - 22, { align: 'center' });
+    // ═══════════════════════════════════════════════════
+    //  SECTION 6 — TERMS & CONDITIONS
+    // ═══════════════════════════════════════════════════
 
+    drawLine(m, y, pw - m, y, borderC, 0.3);
+    y += 4;
+
+    doc.setFontSize(7.5);
     doc.setFont(undefined, 'bold');
-    doc.setFontSize(8);
-    doc.text('Maintained By PANDA STUDIOS', pw / 2, ph - 16, { align: 'center' });
+    doc.setTextColor(...navy);
+    doc.text('TERMS & CONDITIONS', m, y + 1);
+    y += 5;
 
     doc.setFont(undefined, 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(...light);
+
+    const terms = [
+        '1. Goods once sold will not be taken back or exchanged.',
+        '2. Warranty as per manufacturer policy.',
+        '3. Subject to local jurisdiction only.',
+        '4. Please keep this invoice for future reference.',
+        '5. Payment is due by the date mentioned above.',
+    ];
+    terms.forEach(t => {
+        doc.text(t, m, y + 1);
+        y += 3.5;
+    });
+
+    y += 2;
+
+    // ═══════════════════════════════════════════════════
+    //  SECTION 7 — SIGNATURE AREA
+    // ═══════════════════════════════════════════════════
+
+    drawLine(m, y, pw - m, y, borderC, 0.3);
+    y += 6;
+
+    // Right side — Authorized Signatory
+    const sigBlockX = pw - m - 65;
+    const sigBlockW = 65;
+
+    doc.setFontSize(7.5);
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(...navy);
+    doc.text('For ' + (businessSettings.businessName || 'BILLJI'), sigBlockX, y);
+
+    y += 16;
+
+    // Signature line
+    drawLine(sigBlockX, y, sigBlockX + sigBlockW, y, dark, 0.4);
+    y += 4;
+
     doc.setFontSize(7);
-    doc.text('A Product Of Sudeepta Kumar Panda', pw / 2, ph - 12, { align: 'center' });
+    doc.setFont(undefined, 'normal');
+    doc.setTextColor(...mid);
+    doc.text('Authorized Signatory', sigBlockX + sigBlockW / 2, y, { align: 'center' });
+
+    // Digital signature text (light blue, no box)
+    doc.setFontSize(7);
+    doc.setFont(undefined, 'normal');
+    doc.setTextColor(147, 197, 253); // light blue
+    doc.text('Digitally Signed', sigBlockX + sigBlockW / 2, y - 10, { align: 'center' });
+
+    // ═══════════════════════════════════════════════════
+    //  SECTION 8 — FOOTER
+    // ═══════════════════════════════════════════════════
+
+    // Bottom accent bar
+    doc.setFillColor(...navy);
+    doc.rect(0, ph - 18, pw, 18, 'F');
+
+    doc.setFontSize(9);
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(255, 255, 255);
+    doc.text('Thank You For Your Business', pw / 2, ph - 12, { align: 'center' });
+
+    doc.setFontSize(6.5);
+    doc.setFont(undefined, 'normal');
+    doc.setTextColor(180, 190, 210);
+    doc.text('Powered By BILLJI  |  Maintained By PANDA STUDIOS', pw / 2, ph - 7, { align: 'center' });
+
+    // Thin accent line at the very bottom
+    doc.setFillColor(...accent);
+    doc.rect(0, ph - 2, pw, 2, 'F');
 
     doc.save('invoice-' + invoice.invoiceNumber + '.pdf');
 };
+
+
+/**
+ * Convert a number to Indian-style words (supports up to crores)
+ */
+function numberToWords(num) {
+    if (num === 0) return 'Zero';
+
+    const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
+        'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen',
+        'Seventeen', 'Eighteen', 'Nineteen'];
+    const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+    const convert = (n) => {
+        if (n === 0) return '';
+        if (n < 20) return ones[n];
+        if (n < 100) return tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : '');
+        if (n < 1000) return ones[Math.floor(n / 100)] + ' Hundred' + (n % 100 ? ' and ' + convert(n % 100) : '');
+        if (n < 100000) return convert(Math.floor(n / 1000)) + ' Thousand' + (n % 1000 ? ' ' + convert(n % 1000) : '');
+        if (n < 10000000) return convert(Math.floor(n / 100000)) + ' Lakh' + (n % 100000 ? ' ' + convert(n % 100000) : '');
+        return convert(Math.floor(n / 10000000)) + ' Crore' + (n % 10000000 ? ' ' + convert(n % 10000000) : '');
+    };
+
+    const rupees = Math.floor(num);
+    const paise = Math.round((num - rupees) * 100);
+
+    let result = 'Rupees ' + convert(rupees);
+    if (paise > 0) {
+        result += ' and ' + convert(paise) + ' Paise';
+    }
+    return result;
+}
