@@ -269,50 +269,53 @@ export const Invoices = () => {
         const pdfData = exportInvoicePDF(sharingInvoice, businessSettings, { returnBlob: true });
         const pdfFile = new File([pdfData.blob], pdfData.filename, { type: 'application/pdf' });
 
-        try {
-            // Try Web Share API with file (works on mobile — shares PDF directly)
-            if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+        // Use Web Share API to share the PDF file directly (works on mobile + desktop Chrome/Edge)
+        if (navigator.share) {
+            try {
                 await navigator.share({
                     title: `Invoice ${sharingInvoice.invoiceNumber}`,
                     text: message,
                     files: [pdfFile],
                 });
                 handleCloseShare();
-                toast.success('Invoice shared!');
+                toast.success('Invoice PDF shared!');
                 return;
+            } catch (err) {
+                if (err.name === 'AbortError') {
+                    // User cancelled the share dialog
+                    handleCloseShare();
+                    return;
+                }
+                // If file sharing failed, try sharing without files
+                try {
+                    await navigator.share({
+                        title: `Invoice ${sharingInvoice.invoiceNumber}`,
+                        text: message,
+                        url: invoiceUrl,
+                    });
+                    // Also download the PDF so they have the copy
+                    exportInvoicePDF(sharingInvoice, businessSettings);
+                    handleCloseShare();
+                    toast.success('Invoice shared! PDF also downloaded.');
+                    return;
+                } catch (innerErr) {
+                    if (innerErr.name === 'AbortError') {
+                        handleCloseShare();
+                        return;
+                    }
+                }
             }
-        } catch (err) {
-            // User cancelled share — stop
-            if (err.name === 'AbortError') {
-                handleCloseShare();
-                return;
-            }
-            console.warn('Web Share not available, falling back to download + WhatsApp link:', err);
         }
 
-        // Fallback for desktop: download the PDF first, then open WhatsApp
-        // Step 1: Auto-download the PDF so user has the bill copy
-        const downloadLink = document.createElement('a');
-        downloadLink.href = URL.createObjectURL(pdfData.blob);
-        downloadLink.download = pdfData.filename;
-        document.body.appendChild(downloadLink);
-        downloadLink.click();
-        document.body.removeChild(downloadLink);
-        URL.revokeObjectURL(downloadLink.href);
-
-        // Step 2: Open WhatsApp with the message
+        // Last resort fallback for very old browsers: download PDF + open WhatsApp link
+        exportInvoicePDF(sharingInvoice, businessSettings);
         const phone = (sharingInvoice.customerPhone || '').replace(/\D/g, '');
         const waUrl = phone
             ? `https://wa.me/${phone.startsWith('91') ? phone : '91' + phone}?text=${encodeURIComponent(message)}`
             : `https://wa.me/?text=${encodeURIComponent(message)}`;
-
-        // Small delay so the download starts before opening WhatsApp
-        setTimeout(() => {
-            window.open(waUrl, '_blank');
-        }, 500);
-
+        setTimeout(() => window.open(waUrl, '_blank'), 300);
         handleCloseShare();
-        toast.success('PDF downloaded! Attach it in WhatsApp 📎', { duration: 5000 });
+        toast.success('Invoice PDF downloaded & WhatsApp opened');
     };
 
     const handleShareEmail = async () => {
