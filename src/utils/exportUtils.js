@@ -594,7 +594,7 @@ export const exportInvoicePDF = (invoice, businessSettings = {}, options = {}) =
     doc.setFontSize(9);
     doc.setFont(undefined, 'bold');
     doc.setTextColor(255, 255, 255);
-    doc.text('Thank You For Your Business', pw / 2, ph - 12, { align: 'center' });
+    doc.text('Thank You, Visit Again!', pw / 2, ph - 12, { align: 'center' });
 
     doc.setFontSize(6.5);
     doc.setFont(undefined, 'normal');
@@ -798,7 +798,7 @@ export const generateInvoiceImage = async (invoice, businessSettings = {}) => {
 
         <!-- FOOTER -->
         <div style="background: #1a2342; padding: 16px 32px; text-align: center;">
-            <div style="font-size: 14px; font-weight: 600; color: #fff;">Thank You</div>
+            <div style="font-size: 14px; font-weight: 600; color: #fff;">Thank You, Visit Again!</div>
             <div style="font-size: 11px; color: #94a3b870; margin-top: 4px;">Powered By BILLJI &nbsp;|&nbsp; Maintained By PANDA STUDIOS</div>
         </div>
 

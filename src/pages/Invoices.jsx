@@ -263,61 +263,23 @@ export const Invoices = () => {
         if (!sharingInvoice) return;
 
         const businessName = businessSettings.businessName || 'BILLJI';
-        const message = `Hi ${sharingInvoice.customerName},\n\nPlease find your invoice *${sharingInvoice.invoiceNumber}* for *${formatCurrency(sharingInvoice.total)}*.\n\nThank You, Visit Again! 🙏\n— ${businessName}`;
+        const invoiceUrl = `${window.location.origin}/invoice/${sharingInvoice.id}`;
+        
+        // Include the invoice link so the customer can view it
+        const message = `Hi ${sharingInvoice.customerName},\n\nPlease find your invoice *${sharingInvoice.invoiceNumber}* for *${formatCurrency(sharingInvoice.total)}*.\n\nYou can view and download it here: ${invoiceUrl}\n\nThank You, Visit Again! 🙏\n— ${businessName}`;
 
         try {
-            toast.loading('Generating invoice image...', { id: 'wa-share' });
-
-            // Generate invoice as PNG image
-            const imageFile = await generateInvoiceImage(sharingInvoice, businessSettings);
-
-            // Check if Web Share API supports sharing this image file
-            if (navigator.share && navigator.canShare && navigator.canShare({ files: [imageFile] })) {
-                toast.dismiss('wa-share');
-                await navigator.share({
-                    title: `Invoice ${sharingInvoice.invoiceNumber}`,
-                    text: message,
-                    files: [imageFile],
-                });
-                handleCloseShare();
-                toast.success('Invoice image shared!');
-                return;
-            }
-
-            // Fallback: try sharing the PDF file
-            const pdfData = exportInvoicePDF(sharingInvoice, businessSettings, { returnBlob: true });
-            const pdfFile = new File([pdfData.blob], pdfData.filename, { type: 'application/pdf' });
-
-            if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
-                toast.dismiss('wa-share');
-                await navigator.share({
-                    title: `Invoice ${sharingInvoice.invoiceNumber}`,
-                    text: message,
-                    files: [pdfFile],
-                });
-                handleCloseShare();
-                toast.success('Invoice PDF shared!');
-                return;
-            }
-
-            // Last fallback: open WhatsApp with message (no file attachment possible)
-            toast.dismiss('wa-share');
             const phone = (sharingInvoice.customerPhone || '').replace(/\D/g, '');
             const waUrl = phone
                 ? `https://wa.me/${phone.startsWith('91') ? phone : '91' + phone}?text=${encodeURIComponent(message)}`
                 : `https://wa.me/?text=${encodeURIComponent(message)}`;
+            
             window.open(waUrl, '_blank');
             handleCloseShare();
-            toast.success('WhatsApp opened — use the Download button to get the PDF');
+            toast.success('WhatsApp opened!');
         } catch (err) {
-            toast.dismiss('wa-share');
-            if (err.name === 'AbortError') {
-                // User cancelled share dialog
-                handleCloseShare();
-                return;
-            }
             console.error('Share failed:', err);
-            toast.error('Failed to share invoice');
+            toast.error('Failed to open WhatsApp');
         }
     };
 
