@@ -263,7 +263,7 @@ export const Invoices = () => {
         if (!sharingInvoice) return;
 
         const businessName = businessSettings.businessName || 'BILLJI';
-        const message = `Hi ${sharingInvoice.customerName},\n\nPlease find your invoice *${sharingInvoice.invoiceNumber}* for *${formatCurrency(sharingInvoice.total)}*.\n\nThank you!\n— ${businessName}`;
+        const message = `Hi ${sharingInvoice.customerName},\n\nPlease find your invoice *${sharingInvoice.invoiceNumber}* for *${formatCurrency(sharingInvoice.total)}*.\n\nThank You, Visit Again! 🙏\n— ${businessName}`;
 
         try {
             toast.loading('Generating invoice image...', { id: 'wa-share' });
