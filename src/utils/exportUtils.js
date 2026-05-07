@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import Papa from 'papaparse';
+import html2canvas from 'html2canvas';
 
 /**
  * Export data to CSV
@@ -645,3 +646,185 @@ function numberToWords(num) {
     }
     return result;
 }
+
+/**
+ * Generate an invoice as a PNG image (File object) for sharing via WhatsApp.
+ * Renders a professional invoice as HTML offscreen, captures with html2canvas.
+ * @returns {Promise<File>} - A PNG File object ready for Web Share API
+ */
+export const generateInvoiceImage = async (invoice, businessSettings = {}) => {
+    const formatMoney = (v) => {
+        const n = parseFloat(v) || 0;
+        return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    const formatDate = (d) => {
+        if (!d) return '—';
+        const dt = typeof d === 'string' ? new Date(d) : (d.toDate ? d.toDate() : d);
+        return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    };
+
+    const statusColor = invoice.status === 'paid'
+        ? '#16a34a'
+        : invoice.status === 'overdue'
+            ? '#dc2626'
+            : '#ea580c';
+
+    // Build items rows
+    const itemRows = (invoice.items || []).map((item, idx) => {
+        const qty = parseFloat(item.quantity) || 0;
+        const price = parseFloat(item.price) || 0;
+        const discount = parseFloat(item.discount) || 0;
+        const lineTotal = (qty * price) - discount;
+        return `
+            <tr style="border-bottom: 1px solid #e5e7eb; ${idx % 2 === 1 ? 'background: #f8f9fc;' : ''}">
+                <td style="padding: 10px 12px; text-align: center; color: #9ca3af; font-size: 13px;">${idx + 1}</td>
+                <td style="padding: 10px 12px; font-size: 14px; color: #1a2342;">${item.description || '—'}</td>
+                <td style="padding: 10px 12px; text-align: center; font-size: 12px; color: #6b7280; font-family: monospace;">${item.hsnCode || '—'}</td>
+                <td style="padding: 10px 12px; text-align: center; font-size: 14px; color: #4b5563;">${qty}</td>
+                <td style="padding: 10px 12px; text-align: right; font-size: 14px; color: #4b5563;">${formatMoney(price)}</td>
+                <td style="padding: 10px 12px; text-align: center; font-size: 12px; color: #6b7280;">${invoice.gstRate || 0}%</td>
+                <td style="padding: 10px 12px; text-align: right; font-size: 14px; font-weight: 600; color: #1a2342;">${formatMoney(lineTotal)}</td>
+            </tr>`;
+    }).join('');
+
+    // Amount in words
+    const totalInWords = numberToWords(parseFloat(invoice.total) || 0);
+
+    const html = `
+    <div style="width: 800px; font-family: 'Segoe UI', Arial, sans-serif; background: #fff; color: #1a2342;">
+        <!-- Top Accent -->
+        <div style="height: 6px; background: linear-gradient(90deg, #2563eb, #3b82f6);"></div>
+
+        <!-- HEADER -->
+        <div style="padding: 24px 32px 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                <div>
+                    <div style="font-size: 24px; font-weight: 700; color: #1a2342;">${businessSettings.businessName || 'BILLJI'}</div>
+                    <div style="margin-top: 8px; font-size: 13px; color: #6b7280; line-height: 1.6;">
+                        ${businessSettings.address ? `<div>📍 ${businessSettings.address}</div>` : ''}
+                        ${businessSettings.gstNumber ? `<div style="font-weight: 600; color: #374151;">GSTIN: ${businessSettings.gstNumber}</div>` : ''}
+                        ${businessSettings.phone ? `<div>📞 ${businessSettings.phone}</div>` : ''}
+                        ${businessSettings.email ? `<div>✉️ ${businessSettings.email}</div>` : ''}
+                    </div>
+                </div>
+                <div style="font-size: 28px; font-weight: 700; color: #2563eb; letter-spacing: 2px;">TAX INVOICE</div>
+            </div>
+        </div>
+
+        <!-- Divider -->
+        <div style="margin: 0 32px; border-top: 2px solid #1a2342;"></div>
+
+        <!-- BILL TO + INVOICE DETAILS -->
+        <div style="padding: 20px 32px; display: flex; gap: 20px;">
+            <div style="flex: 1; background: #f8f9fc; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;">
+                <div style="font-size: 10px; font-weight: 700; color: #2563eb; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px;">Bill To</div>
+                <div style="font-size: 18px; font-weight: 700; color: #1a2342;">${invoice.customerName}</div>
+                ${invoice.customerPhone ? `<div style="font-size: 13px; color: #6b7280; margin-top: 6px;">📞 ${invoice.customerPhone}</div>` : ''}
+                ${invoice.customerEmail ? `<div style="font-size: 13px; color: #6b7280; margin-top: 3px;">✉️ ${invoice.customerEmail}</div>` : ''}
+            </div>
+            <div style="flex: 1; background: #f8f9fc; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;">
+                <div style="font-size: 10px; font-weight: 700; color: #2563eb; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 12px;">Invoice Details</div>
+                <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px;"><span style="color: #6b7280;">Invoice No:</span><span style="font-weight: 600; color: #1a2342;">${invoice.invoiceNumber}</span></div>
+                <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px;"><span style="color: #6b7280;">Date:</span><span style="color: #1a2342;">${formatDate(invoice.date)}</span></div>
+                <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px;"><span style="color: #6b7280;">Due Date:</span><span style="color: #1a2342;">${formatDate(invoice.dueDate)}</span></div>
+                <div style="display: flex; justify-content: space-between; font-size: 13px; align-items: center;"><span style="color: #6b7280;">Status:</span><span style="font-weight: 700; color: ${statusColor}; font-size: 12px; padding: 2px 10px; border-radius: 999px; border: 1px solid ${statusColor}30;">${(invoice.status || 'unpaid').toUpperCase()}</span></div>
+            </div>
+        </div>
+
+        <!-- ITEMS TABLE -->
+        <div style="padding: 0 32px 16px;">
+            <table style="width: 100%; border-collapse: collapse; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">
+                <thead>
+                    <tr style="background: #1a2342; color: #fff;">
+                        <th style="padding: 12px 12px; text-align: center; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; width: 40px;">#</th>
+                        <th style="padding: 12px 12px; text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">Item Description</th>
+                        <th style="padding: 12px 12px; text-align: center; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">HSN</th>
+                        <th style="padding: 12px 12px; text-align: center; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; width: 50px;">Qty</th>
+                        <th style="padding: 12px 12px; text-align: right; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">Unit Price</th>
+                        <th style="padding: 12px 12px; text-align: center; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; width: 60px;">GST %</th>
+                        <th style="padding: 12px 12px; text-align: right; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${itemRows}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- TOTALS -->
+        <div style="padding: 0 32px 16px; display: flex; justify-content: flex-end;">
+            <div style="width: 300px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">
+                <div style="display: flex; justify-content: space-between; background: #f8f9fc; padding: 10px 16px; border-bottom: 1px solid #e5e7eb; font-size: 14px;"><span style="color: #6b7280;">Subtotal</span><span style="color: #1a2342;">${formatMoney(invoice.subtotal)}</span></div>
+                <div style="display: flex; justify-content: space-between; background: #f8f9fc; padding: 10px 16px; border-bottom: 1px solid #e5e7eb; font-size: 14px;"><span style="color: #6b7280;">GST (${invoice.gstRate || 0}%)</span><span style="color: #1a2342;">${formatMoney(invoice.gstAmount)}</span></div>
+                <div style="display: flex; justify-content: space-between; background: #1a2342; color: #fff; padding: 12px 16px; font-weight: 700; font-size: 16px;"><span>GRAND TOTAL</span><span>${formatMoney(invoice.total)}</span></div>
+            </div>
+        </div>
+
+        <!-- Amount in Words -->
+        <div style="padding: 0 32px 12px; font-size: 12px; font-style: italic; color: #9ca3af;">Amount in words: ${totalInWords} Only</div>
+
+        ${invoice.notes && invoice.notes.trim() ? `
+        <!-- NOTES -->
+        <div style="padding: 0 32px 12px;">
+            <div style="background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; padding: 12px 16px;">
+                <div style="font-size: 10px; font-weight: 700; color: #d97706; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 4px;">Payment Notes</div>
+                <div style="font-size: 13px; color: #374151; white-space: pre-wrap;">${invoice.notes}</div>
+            </div>
+        </div>` : ''}
+
+        <!-- TERMS -->
+        <div style="padding: 0 32px 12px; border-top: 1px solid #e5e7eb; margin: 0 32px; padding-top: 12px;">
+            <div style="font-size: 10px; font-weight: 700; color: #1a2342; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px;">Terms & Conditions</div>
+            <ol style="font-size: 11px; color: #9ca3af; margin: 0; padding-left: 16px; line-height: 1.8;">
+                <li>Goods once sold will not be taken back or exchanged.</li>
+                <li>Warranty as per manufacturer policy.</li>
+                <li>Subject to local jurisdiction only.</li>
+                <li>Please keep this invoice for future reference.</li>
+                <li>Payment is due by the date mentioned above.</li>
+            </ol>
+        </div>
+
+        <!-- SIGNATURE -->
+        <div style="padding: 8px 32px 16px; border-top: 1px solid #e5e7eb; margin: 0 32px;">
+            <div style="display: flex; justify-content: flex-end;">
+                <div style="text-align: center; width: 200px;">
+                    <div style="font-size: 12px; font-weight: 700; color: #1a2342;">For ${businessSettings.businessName || 'BILLJI'}</div>
+                    <div style="margin: 16px 0 4px; font-size: 11px; color: #93c5fd;">Digitally Signed</div>
+                    <div style="border-top: 1px solid #6b7280; padding-top: 6px; font-size: 11px; color: #6b7280;">Authorized Signatory</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- FOOTER -->
+        <div style="background: #1a2342; padding: 16px 32px; text-align: center;">
+            <div style="font-size: 14px; font-weight: 600; color: #fff;">Thank You</div>
+            <div style="font-size: 11px; color: #94a3b870; margin-top: 4px;">Powered By BILLJI &nbsp;|&nbsp; Maintained By PANDA STUDIOS</div>
+        </div>
+
+        <!-- Bottom Accent -->
+        <div style="height: 4px; background: linear-gradient(90deg, #2563eb, #3b82f6);"></div>
+    </div>`;
+
+    // Create hidden container
+    const container = document.createElement('div');
+    container.style.cssText = 'position: fixed; left: -9999px; top: 0; z-index: -1;';
+    container.innerHTML = html;
+    document.body.appendChild(container);
+
+    try {
+        const canvas = await html2canvas(container.firstElementChild, {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: '#ffffff',
+            logging: false,
+        });
+
+        // Convert canvas to blob
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png', 0.95));
+        const file = new File([blob], `invoice-${invoice.invoiceNumber}.png`, { type: 'image/png' });
+        return file;
+    } finally {
+        document.body.removeChild(container);
+    }
+};

@@ -19,7 +19,7 @@ import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { Plus, Pencil, Trash2, FileText, Download, Search, Calendar, Mail, Send, Loader2, Share2, MessageCircle, X, Phone, Eye } from 'lucide-react';
 import { formatCurrency } from '../utils/currencyUtils';
 import { calculateTotalWithGST, calculateGST } from '../utils/taxCalculations';
-import { exportInvoicePDF } from '../utils/exportUtils';
+import { exportInvoicePDF, generateInvoiceImage } from '../utils/exportUtils';
 import { format, isWithinInterval, parseISO } from 'date-fns';
 import toast from 'react-hot-toast';
 
@@ -262,16 +262,34 @@ export const Invoices = () => {
     const handleShareWhatsApp = async () => {
         if (!sharingInvoice) return;
 
-        const invoiceUrl = `${window.location.origin}/invoice/${sharingInvoice.id}`;
-        const message = `Hi ${sharingInvoice.customerName},\n\nHere is your invoice *${sharingInvoice.invoiceNumber}* for *${formatCurrency(sharingInvoice.total)}*.\n\nView & download: ${invoiceUrl}\n\nThank you!\n— ${businessSettings.businessName || 'BILLJI'}`;
+        const businessName = businessSettings.businessName || 'BILLJI';
+        const message = `Hi ${sharingInvoice.customerName},\n\nPlease find your invoice *${sharingInvoice.invoiceNumber}* for *${formatCurrency(sharingInvoice.total)}*.\n\nThank you!\n— ${businessName}`;
 
-        // Generate PDF in memory
-        const pdfData = exportInvoicePDF(sharingInvoice, businessSettings, { returnBlob: true });
-        const pdfFile = new File([pdfData.blob], pdfData.filename, { type: 'application/pdf' });
+        try {
+            toast.loading('Generating invoice image...', { id: 'wa-share' });
 
-        // Use Web Share API to share the PDF file directly (works on mobile + desktop Chrome/Edge)
-        if (navigator.share) {
-            try {
+            // Generate invoice as PNG image
+            const imageFile = await generateInvoiceImage(sharingInvoice, businessSettings);
+
+            // Check if Web Share API supports sharing this image file
+            if (navigator.share && navigator.canShare && navigator.canShare({ files: [imageFile] })) {
+                toast.dismiss('wa-share');
+                await navigator.share({
+                    title: `Invoice ${sharingInvoice.invoiceNumber}`,
+                    text: message,
+                    files: [imageFile],
+                });
+                handleCloseShare();
+                toast.success('Invoice image shared!');
+                return;
+            }
+
+            // Fallback: try sharing the PDF file
+            const pdfData = exportInvoicePDF(sharingInvoice, businessSettings, { returnBlob: true });
+            const pdfFile = new File([pdfData.blob], pdfData.filename, { type: 'application/pdf' });
+
+            if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+                toast.dismiss('wa-share');
                 await navigator.share({
                     title: `Invoice ${sharingInvoice.invoiceNumber}`,
                     text: message,
@@ -280,42 +298,27 @@ export const Invoices = () => {
                 handleCloseShare();
                 toast.success('Invoice PDF shared!');
                 return;
-            } catch (err) {
-                if (err.name === 'AbortError') {
-                    // User cancelled the share dialog
-                    handleCloseShare();
-                    return;
-                }
-                // If file sharing failed, try sharing without files
-                try {
-                    await navigator.share({
-                        title: `Invoice ${sharingInvoice.invoiceNumber}`,
-                        text: message,
-                        url: invoiceUrl,
-                    });
-                    // Also download the PDF so they have the copy
-                    exportInvoicePDF(sharingInvoice, businessSettings);
-                    handleCloseShare();
-                    toast.success('Invoice shared! PDF also downloaded.');
-                    return;
-                } catch (innerErr) {
-                    if (innerErr.name === 'AbortError') {
-                        handleCloseShare();
-                        return;
-                    }
-                }
             }
-        }
 
-        // Last resort fallback for very old browsers: download PDF + open WhatsApp link
-        exportInvoicePDF(sharingInvoice, businessSettings);
-        const phone = (sharingInvoice.customerPhone || '').replace(/\D/g, '');
-        const waUrl = phone
-            ? `https://wa.me/${phone.startsWith('91') ? phone : '91' + phone}?text=${encodeURIComponent(message)}`
-            : `https://wa.me/?text=${encodeURIComponent(message)}`;
-        setTimeout(() => window.open(waUrl, '_blank'), 300);
-        handleCloseShare();
-        toast.success('Invoice PDF downloaded & WhatsApp opened');
+            // Last fallback: open WhatsApp with message (no file attachment possible)
+            toast.dismiss('wa-share');
+            const phone = (sharingInvoice.customerPhone || '').replace(/\D/g, '');
+            const waUrl = phone
+                ? `https://wa.me/${phone.startsWith('91') ? phone : '91' + phone}?text=${encodeURIComponent(message)}`
+                : `https://wa.me/?text=${encodeURIComponent(message)}`;
+            window.open(waUrl, '_blank');
+            handleCloseShare();
+            toast.success('WhatsApp opened — use the Download button to get the PDF');
+        } catch (err) {
+            toast.dismiss('wa-share');
+            if (err.name === 'AbortError') {
+                // User cancelled share dialog
+                handleCloseShare();
+                return;
+            }
+            console.error('Share failed:', err);
+            toast.error('Failed to share invoice');
+        }
     };
 
     const handleShareEmail = async () => {
