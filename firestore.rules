@@ -19,6 +19,12 @@ service cloud.firestore {
       allow create: if isAuthenticated() && isOwner(request.resource.data.userId);
     }
 
+    // Sales collection
+    match /sales/{saleId} {
+      allow read, write: if isAuthenticated() && isOwner(resource.data.userId);
+      allow create: if isAuthenticated() && isOwner(request.resource.data.userId);
+    }
+
     // Products collection
     match /products/{productId} {
       allow read, write: if isAuthenticated() && isOwner(resource.data.userId);
