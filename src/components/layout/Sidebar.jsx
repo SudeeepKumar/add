@@ -12,6 +12,7 @@ import {
     Settings as SettingsIcon,
     LogOut,
     User,
+    ArrowLeftRight,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -35,6 +36,7 @@ export const Sidebar = ({ onClose }) => {
         { path: '/transactions', icon: Receipt, label: 'Transactions' },
         { path: '/inventory', icon: Package, label: 'Inventory' },
         { path: '/invoices', icon: FileText, label: 'Invoices' },
+        { path: '/returns', icon: ArrowLeftRight, label: 'Returns' },
         { path: '/reports', icon: FileBarChart, label: 'Reports' },
         { path: '/suppliers', icon: Truck, label: 'Suppliers' },
         { path: '/bulk-import', icon: Upload, label: 'Bulk Import' },

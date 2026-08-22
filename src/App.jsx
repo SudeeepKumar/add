@@ -11,6 +11,7 @@ import { Transactions } from './pages/Transactions';
 import { Sales } from './pages/Sales';
 import { Inventory } from './pages/Inventory';
 import { Invoices } from './pages/Invoices';
+import { Returns } from './pages/Returns';
 import { Reports } from './pages/Reports';
 import { Settings } from './pages/Settings';
 import { Suppliers } from './pages/Suppliers';
@@ -45,6 +46,7 @@ function App() {
             <Route path="transactions" element={<Transactions />} />
             <Route path="inventory" element={<Inventory />} />
             <Route path="invoices" element={<Invoices />} />
+            <Route path="returns" element={<Returns />} />
             <Route path="reports" element={<Reports />} />
             <Route path="suppliers" element={<Suppliers />} />
             <Route path="bulk-import" element={<BulkImport />} />
