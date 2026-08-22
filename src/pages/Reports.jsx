@@ -116,6 +116,24 @@ export const Reports = () => {
             }
         });
 
+        // Dynamically reverse Sales Returns from Income
+        filteredReturns.forEach(r => {
+            if (r.returnType === 'sales') {
+                const p = products.find(prod => prod.id === r.productId);
+                if (p) {
+                    const originalSaleValue = (Number(p.sellingPrice) || 0) * (Number(r.quantity) || 0);
+                    if (originalSaleValue > 0) {
+                        tIncome -= originalSaleValue;
+                        if (incomeByCategory['Product Sales']) {
+                            incomeByCategory['Product Sales'] -= originalSaleValue;
+                        } else {
+                            incomeByCategory['Product Sales'] = -originalSaleValue;
+                        }
+                    }
+                }
+            }
+        });
+
         return {
             totalIncome: tIncome,
             totalExpenses: tExpense,
@@ -123,7 +141,7 @@ export const Reports = () => {
             incomeData: Object.entries(incomeByCategory).map(([category, amount]) => ({ category, amount })),
             expensesData: Object.entries(expensesByCategory).map(([category, amount]) => ({ category, amount }))
         };
-    }, [filteredTxns]);
+    }, [filteredTxns, filteredReturns, products]);
 
     // Inventory Valuation (Current Snapshot, not date filtered)
     const { inventoryPurchaseValue } = useMemo(() => {
@@ -147,20 +165,53 @@ export const Reports = () => {
         const salesByPlatform = {};
         const productMap = {};
 
+        // 1. Add all sales
         filteredSales.forEach(sale => {
-            rev += (sale.totalRevenue || 0);
-            cost += (sale.totalCost || 0);
+            rev += (Number(sale.totalRevenue) || 0);
+            cost += (Number(sale.totalCost) || 0);
 
             const p = sale.platform || 'Other';
-            salesByPlatform[p] = (salesByPlatform[p] || 0) + (sale.totalRevenue || 0);
+            salesByPlatform[p] = (salesByPlatform[p] || 0) + (Number(sale.totalRevenue) || 0);
 
             (sale.items || []).forEach(item => {
-                const key = item.productName;
+                const key = item.productName || 'Unknown Product';
                 if (!productMap[key]) productMap[key] = { revenue: 0, cost: 0, qty: 0 };
-                productMap[key].revenue += item.sellingPrice * item.quantity;
-                productMap[key].cost += item.purchasePrice * item.quantity;
-                productMap[key].qty += item.quantity;
+                productMap[key].revenue += (Number(item.sellingPrice) || 0) * (Number(item.quantity) || 0);
+                productMap[key].cost += (Number(item.purchasePrice) || 0) * (Number(item.quantity) || 0);
+                productMap[key].qty += (Number(item.quantity) || 0);
             });
+        });
+
+        // 2. Subtract all sales returns (to get Net Sales)
+        filteredReturns.forEach(ret => {
+            if (ret.returnType === 'sales') {
+                const p = products.find(prod => prod.id === ret.productId);
+                if (p) {
+                    const returnRevenue = (Number(p.sellingPrice) || 0) * (Number(ret.quantity) || 0);
+                    const returnCost = (Number(p.purchasePrice) || 0) * (Number(ret.quantity) || 0);
+                    
+                    rev -= returnRevenue;
+                    cost -= returnCost;
+                    
+                    const key = ret.productName || 'Unknown Product';
+                    if (productMap[key]) {
+                        productMap[key].revenue -= returnRevenue;
+                        productMap[key].cost -= returnCost;
+                        productMap[key].qty -= (Number(ret.quantity) || 0);
+                    }
+                    
+                    let platform = 'Unknown';
+                    if (ret.saleId) {
+                        const sale = salesData.find(s => s.id === ret.saleId);
+                        if (sale) platform = sale.platform;
+                    } else if (ret.orderId) {
+                        const sale = salesData.find(s => s.orderId === ret.orderId);
+                        if (sale) platform = sale.platform;
+                    }
+                    
+                    salesByPlatform[platform] = (Number(salesByPlatform[platform]) || 0) - returnRevenue;
+                }
+            }
         });
 
         const platData = Object.entries(salesByPlatform)
@@ -179,15 +230,16 @@ export const Reports = () => {
             topProductsData: prodArr.slice(0, 5),
             bottomProductsData: [...prodArr].reverse().slice(0, 5).filter(p => p.revenue > 0)
         };
-    }, [filteredSales]);
+    }, [filteredSales, filteredReturns, products, salesData]);
 
 
     // ──────────────────────────────────────────────────────────────
     // 4. RETURNS ANALYTICS
     // ──────────────────────────────────────────────────────────────
     
-    const { returnsByPlatform, returnsSummary } = useMemo(() => {
+    const { returnsByPlatform, returnsSummary, topReturnedProducts } = useMemo(() => {
         const platMap = {};
+        const productReturnMap = {};
         let totalSalesReturnCharges = 0;
         let totalPurchaseRefunds = 0;
         let salesReturnCount = 0;
@@ -195,7 +247,7 @@ export const Reports = () => {
 
         filteredReturns.forEach(r => {
             if (r.returnType === 'sales') {
-                salesReturnCount++;
+                salesReturnCount += (r.quantity || 1);
                 totalSalesReturnCharges += r.returnCharges || 0;
                 
                 // Try to find the platform from the original sale
@@ -209,11 +261,21 @@ export const Reports = () => {
                 }
 
                 platMap[platform] = (platMap[platform] || 0) + 1;
+                
+                // Track returned product quantity
+                const prodName = r.productName || 'Unknown Product';
+                productReturnMap[prodName] = (productReturnMap[prodName] || 0) + (r.quantity || 1);
+                
             } else {
-                purchaseReturnCount++;
+                purchaseReturnCount += (r.quantity || 1);
                 totalPurchaseRefunds += r.returnCharges || 0;
             }
         });
+        
+        const topReturned = Object.entries(productReturnMap)
+            .map(([name, count]) => ({ name, count }))
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 5);
 
         return {
             returnsByPlatform: Object.entries(platMap).map(([platform, count]) => ({ platform, count })),
@@ -222,7 +284,8 @@ export const Reports = () => {
                 purchaseReturnCount,
                 totalSalesReturnCharges,
                 totalPurchaseRefunds
-            }
+            },
+            topReturnedProducts: topReturned
         };
     }, [filteredReturns, salesData]);
 
@@ -527,30 +590,50 @@ export const Reports = () => {
                             </div>
                         </div>
 
-                        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-                            <h3 className="text-lg font-semibold text-gray-900 mb-4">Sales Returns by Platform</h3>
-                            {returnsByPlatform.length > 0 ? (
-                                <ResponsiveContainer width="100%" height={300}>
-                                    <PieChart>
-                                        <Pie
-                                            data={returnsByPlatform}
-                                            dataKey="count"
-                                            nameKey="platform"
-                                            cx="50%"
-                                            cy="50%"
-                                            outerRadius={100}
-                                            label={(entry) => `${entry.platform} (${entry.count} returns)`}
-                                        >
-                                            {returnsByPlatform.map((entry, index) => (
-                                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                            ))}
-                                        </Pie>
-                                        <Tooltip formatter={(value) => `${value} Returns`} />
-                                    </PieChart>
-                                </ResponsiveContainer>
-                            ) : (
-                                <p className="text-gray-500 text-center py-12">No sales returns found for this period.</p>
-                            )}
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                                <h3 className="text-lg font-semibold text-gray-900 mb-4">Sales Returns by Platform</h3>
+                                {returnsByPlatform.length > 0 ? (
+                                    <ResponsiveContainer width="100%" height={300}>
+                                        <PieChart>
+                                            <Pie
+                                                data={returnsByPlatform}
+                                                dataKey="count"
+                                                nameKey="platform"
+                                                cx="50%"
+                                                cy="50%"
+                                                outerRadius={100}
+                                                label={(entry) => `${entry.platform} (${entry.count} returns)`}
+                                            >
+                                                {returnsByPlatform.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                                ))}
+                                            </Pie>
+                                            <Tooltip formatter={(value) => `${value} Returns`} />
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                ) : (
+                                    <p className="text-gray-500 text-center py-12">No sales returns found for this period.</p>
+                                )}
+                            </div>
+
+                            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                                <h3 className="text-lg font-semibold text-gray-900 mb-4">Most Returned Products</h3>
+                                {topReturnedProducts && topReturnedProducts.length > 0 ? (
+                                    <ResponsiveContainer width="100%" height={300}>
+                                        <BarChart data={topReturnedProducts} layout="vertical" margin={{ left: 80, right: 20 }}>
+                                            <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
+                                            <XAxis type="number" allowDecimals={false} />
+                                            <YAxis type="category" dataKey="name" width={75} tick={{ fontSize: 11 }} />
+                                            <Tooltip formatter={(value) => `${value} units`} cursor={{ fill: 'rgba(0,0,0,0.05)' }} />
+                                            <Legend />
+                                            <Bar dataKey="count" fill="#ef4444" name="Quantity Returned" radius={[0, 4, 4, 0]} />
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                ) : (
+                                    <p className="text-gray-500 text-center py-12">No product returns data for this period.</p>
+                                )}
+                            </div>
                         </div>
                     </div>
                 )}

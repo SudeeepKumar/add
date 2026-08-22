@@ -20,6 +20,7 @@ import { format } from 'date-fns';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../config/firebase';
 import toast from 'react-hot-toast';
+import { getTransactionsByReference, updateTransaction, addTransaction, deleteTransaction } from '../services/transactionService';
 
 // Blank line item for purchase
 const createEmptyLineItem = () => ({
@@ -234,9 +235,7 @@ export const Inventory = () => {
             }
 
             const purchaseDate = new Date(purchaseData.purchaseDate);
-            const { addTransaction } = await import('../services/transactionService');
-
-            let successCount = 0;
+            const newProductIds = [];
 
             for (const item of validItems) {
                 const qty = parseInt(item.quantity);
@@ -324,12 +323,9 @@ export const Inventory = () => {
                         });
                     }
                 }
-                successCount++;
             }
 
-            if (successCount > 0) {
-                toast.success(`Purchase saved! ${successCount} item${successCount > 1 ? 's' : ''} processed.`);
-            }
+            toast.success(`Purchase saved successfully.`);
             setPurchaseModalOpen(false);
             resetPurchaseForm();
         } catch (error) {
@@ -413,7 +409,6 @@ export const Inventory = () => {
 
             if (oldQty !== qty || oldPrice !== price) {
                 try {
-                    const { getTransactionsByReference, updateTransaction, addTransaction } = await import('../services/transactionService');
                     const linkedTransactions = await getTransactionsByReference(editingProduct.id);
                     const purchaseTransactions = linkedTransactions.filter(t => t.type === 'expense' && t.category === 'Purchase');
 
@@ -460,10 +455,9 @@ export const Inventory = () => {
             return;
         }
         try {
-            const { getTransactionsByReference, deleteTransaction: delTransaction } = await import('../services/transactionService');
             const linkedTransactions = await getTransactionsByReference(id);
             if (linkedTransactions.length > 0) {
-                await Promise.all(linkedTransactions.map(t => delTransaction(t.id)));
+                await Promise.all(linkedTransactions.map(t => deleteTransaction(t.id)));
             }
             await deleteProduct(id);
             const txCount = linkedTransactions.length;
@@ -529,8 +523,7 @@ export const Inventory = () => {
                 }],
             });
 
-            const { addTransaction } = await import('../services/transactionService');
-            await addTransaction(user.uid, {
+            const expenseId = await addTransaction(user.uid, {
                 type: 'expense', category: 'Purchase',
                 amount: qty * price,
                 description: `Restock: ${restockingProduct.name} (+${qty} @ ${formatCurrency(price)})`,

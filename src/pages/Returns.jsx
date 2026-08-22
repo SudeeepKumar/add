@@ -138,7 +138,7 @@ export const Returns = () => {
                 const txType = formData.returnType === 'sales' ? 'expense' : 'income';
                 const txCategory = formData.returnType === 'sales' ? 'return charges' : 'Purchase Refund';
                 const txDesc = formData.returnType === 'sales' 
-                    ? `Return charges for Order ${formData.orderId} - ${product.name}`
+                    ? `Return penalty/charges for Order ${formData.orderId} - ${product.name}`
                     : `Refund received for Purchase Return ${formData.orderId} - ${product.name}`;
 
                 await addTransaction(user.uid, {
@@ -147,7 +147,7 @@ export const Returns = () => {
                     amount: Number(formData.returnCharges),
                     description: txDesc,
                     date: formData.returnDate,
-                    paymentMethod: 'Bank Transfer',
+                    paymentMethod: 'System',
                     referenceId: returnId,
                     status: 'completed',
                 });
