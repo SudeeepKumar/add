@@ -106,28 +106,52 @@ export const Reports = () => {
         let tIncome = 0;
         let tExpense = 0;
 
+        // 1. Calculate traditional operating expenses (excluding Asset Purchases)
         filteredTxns.forEach((t) => {
             if (t.type === 'income') {
                 incomeByCategory[t.category] = (incomeByCategory[t.category] || 0) + t.amount;
                 tIncome += t.amount;
-            } else {
+            } else if (t.type === 'expense' && t.category !== 'Purchase') {
+                // EXCLUDE 'Purchase' because inventory is an asset.
+                // Expense is recognized as COGS only when sold.
                 expensesByCategory[t.category] = (expensesByCategory[t.category] || 0) + t.amount;
                 tExpense += t.amount;
             }
         });
 
-        // Sales returns are now recorded as explicit 'expense' transactions (Sales Refund & Liability).
-        // Therefore, we no longer need to dynamically reverse them from tIncome here,
-        // as doing so would double-count the loss and mathematically break the Net Profit.
+        // 2. Calculate COGS (Cost of Goods Sold) dynamically from sales & returns
+        let cogs = 0;
+        filteredSales.forEach(sale => {
+            cogs += (Number(sale.totalCost) || 0);
+        });
+
+        // Reverse COGS for sales returns
+        filteredReturns.forEach(ret => {
+            if (ret.returnType === 'sales') {
+                const p = products.find(prod => prod.id === ret.productId);
+                if (p) {
+                    const returnCost = (Number(p.purchasePrice) || 0) * (Number(ret.quantity) || 0);
+                    cogs -= returnCost;
+                }
+            }
+        });
+
+        // 3. Add COGS to expenses for accurate P&L
+        if (cogs > 0) {
+            expensesByCategory['Cost of Goods Sold (COGS)'] = cogs;
+            tExpense += cogs;
+        }
+
+        // Sales Returns refunds are already explicit 'expense' transactions, so tExpense handles them.
 
         return {
             totalIncome: tIncome,
-            totalExpenses: tExpense,
+            totalExpenses: tExpense, // Now includes COGS and Opertaing Expenses (but not inventory purchases)
             netProfit: tIncome - tExpense,
             incomeData: Object.entries(incomeByCategory).map(([category, amount]) => ({ category, amount })),
             expensesData: Object.entries(expensesByCategory).map(([category, amount]) => ({ category, amount }))
         };
-    }, [filteredTxns, filteredReturns, products]);
+    }, [filteredTxns, filteredSales, filteredReturns, products]);
 
     // Inventory Valuation (Current Snapshot, not date filtered)
     const { inventoryPurchaseValue } = useMemo(() => {
