@@ -4,6 +4,7 @@ import {
     subscribeToReturns,
     addReturn,
     deleteReturn,
+    updateReturn,
 } from '../services/returnService';
 import { subscribeToProducts, updateProduct } from '../services/productService';
 import { addTransaction, getTransactionsByReference, deleteTransaction as delTransaction } from '../services/transactionService';
@@ -40,6 +41,7 @@ export const Returns = () => {
         productId: '',
         quantity: 1,
         restockInventory: true,
+        refundAmount: 0,
         returnCharges: 0, // e.g. flipkart fee or refund amount
         notes: '',
     });
@@ -67,6 +69,105 @@ export const Returns = () => {
         };
     }, [user]);
 
+    // ────────────────────────────────────────
+    // MIGRATE PAST RETURNS
+    // ────────────────────────────────────────
+
+    const handleMigratePastReturns = async () => {
+        if (!window.confirm("This will scan all your past Sales Returns and update their transactions to the new Refund logic. Proceed?")) return;
+        
+        setSaving(true);
+        let migratedCount = 0;
+        try {
+            for (const ret of returnsList) {
+                // Only process sales returns that haven't been fully migrated with a refundAmount yet
+                if (ret.returnType === 'sales' && !ret.refundAmount) {
+                    
+                    // 1. Find matching sale
+                    const sale = sales.find(s => 
+                        (ret.saleId && s.id === ret.saleId) || 
+                        (ret.orderId && s.orderId === ret.orderId)
+                    );
+
+                    if (sale) {
+                        const saleItem = sale.items?.find(i => i.productId === ret.productId) || sale.items?.[0];
+                        if (saleItem) {
+                            const calculatedRefund = (saleItem.sellingPrice || 0) * (ret.quantity || 1);
+                            
+                            // 2. Update the return document with the calculated refund amount
+                            await updateReturn(ret.id, {
+                                refundAmount: calculatedRefund
+                            });
+
+                            // 3. Delete old transactions associated with this return
+                            const oldTxns = await getTransactionsByReference(ret.id);
+                            for (const tx of oldTxns) {
+                                await delTransaction(tx.id);
+                            }
+
+                            // 4. Create new transactions
+                            if (calculatedRefund > 0) {
+                                await addTransaction(user.uid, {
+                                    type: 'expense',
+                                    category: 'Sales Refund',
+                                    amount: calculatedRefund,
+                                    description: `Refund given for Sales Return ${ret.orderId} - ${ret.productName}`,
+                                    date: format(new Date(ret.returnDate), 'yyyy-MM-dd'),
+                                    paymentMethod: 'System',
+                                    referenceId: ret.id,
+                                    status: 'completed',
+                                });
+                            }
+
+                            if (Number(ret.returnCharges) > 0) {
+                                await addTransaction(user.uid, {
+                                    type: 'expense',
+                                    category: 'Liability - Return Charges',
+                                    amount: Number(ret.returnCharges),
+                                    description: `Liability/Penalty for Order ${ret.orderId} - ${ret.productName}`,
+                                    date: format(new Date(ret.returnDate), 'yyyy-MM-dd'),
+                                    paymentMethod: 'System',
+                                    referenceId: ret.id,
+                                    status: 'completed',
+                                });
+                            }
+
+                            migratedCount++;
+                        }
+                    }
+                }
+            }
+            toast.success(`Migration complete! ${migratedCount} past returns updated.`);
+        } catch (error) {
+            console.error("Migration error:", error);
+            toast.error("An error occurred during migration.");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    // Auto-calculate refund amount based on orderId/saleId and productId
+    useEffect(() => {
+        if (formData.returnType === 'sales' && formData.productId && (formData.orderId || formData.saleId)) {
+            // Find sale by saleId or orderId
+            const sale = sales.find(s => 
+                (formData.saleId && s.id === formData.saleId) || 
+                (formData.orderId && s.orderId === formData.orderId)
+            );
+            
+            if (sale) {
+                const saleItem = sale.items?.find(i => i.productId === formData.productId) || sale.items?.[0];
+                if (saleItem) {
+                    const calculatedRefund = (saleItem.sellingPrice || 0) * (formData.quantity || 1);
+                    setFormData(prev => ({
+                        ...prev,
+                        refundAmount: calculatedRefund
+                    }));
+                }
+            }
+        }
+    }, [formData.orderId, formData.saleId, formData.productId, formData.quantity, formData.returnType, sales]);
+
     const resetForm = () => {
         setFormData({
             returnType: 'sales',
@@ -76,6 +177,7 @@ export const Returns = () => {
             productId: '',
             quantity: 1,
             restockInventory: true,
+            refundAmount: 0,
             returnCharges: 0,
             notes: '',
         });
@@ -112,6 +214,7 @@ export const Returns = () => {
                 productName: product.name,
                 quantity: Number(formData.quantity),
                 restockInventory: formData.restockInventory,
+                refundAmount: Number(formData.refundAmount),
                 returnCharges: Number(formData.returnCharges),
                 notes: formData.notes,
             };
@@ -133,12 +236,26 @@ export const Returns = () => {
                 });
             }
 
-            // Record financial transaction if there are charges/refunds
+            // 1. Record financial transaction for Refund Amount
+            if (formData.returnType === 'sales' && Number(formData.refundAmount) > 0) {
+                await addTransaction(user.uid, {
+                    type: 'expense',
+                    category: 'Sales Refund',
+                    amount: Number(formData.refundAmount),
+                    description: `Refund given for Sales Return ${formData.orderId} - ${product.name}`,
+                    date: formData.returnDate,
+                    paymentMethod: 'System',
+                    referenceId: returnId,
+                    status: 'completed',
+                });
+            }
+
+            // 2. Record financial transaction for charges (Liability/Penalty)
             if (Number(formData.returnCharges) > 0) {
                 const txType = formData.returnType === 'sales' ? 'expense' : 'income';
-                const txCategory = formData.returnType === 'sales' ? 'return charges' : 'Purchase Refund';
+                const txCategory = formData.returnType === 'sales' ? 'Liability - Return Charges' : 'Purchase Refund';
                 const txDesc = formData.returnType === 'sales' 
-                    ? `Return penalty/charges for Order ${formData.orderId} - ${product.name}`
+                    ? `Liability/Penalty for Order ${formData.orderId} - ${product.name}`
                     : `Refund received for Purchase Return ${formData.orderId} - ${product.name}`;
 
                 await addTransaction(user.uid, {
@@ -208,15 +325,24 @@ export const Returns = () => {
     return (
         <div className="space-y-6">
             {/* Header */}
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl font-bold text-gray-900">Returns Management</h1>
+                    <h1 className="text-3xl font-bold text-gray-900">Returns Management</h1>
                     <p className="text-gray-500 mt-1">Track returned items, restock inventory, and manage fees</p>
                 </div>
-                <Button onClick={() => setModalOpen(true)} className="flex items-center gap-2">
-                    <Plus className="w-4 h-4" />
-                    Add Return
-                </Button>
+                <div className="flex gap-2">
+                    <Button
+                        onClick={handleMigratePastReturns}
+                        variant="secondary"
+                        className="flex items-center gap-2 bg-yellow-100 text-yellow-800 hover:bg-yellow-200 border-none"
+                    >
+                        Update Past Returns
+                    </Button>
+                    <Button onClick={() => setModalOpen(true)} className="flex items-center gap-2">
+                        <Plus className="w-4 h-4" />
+                        Add Return
+                    </Button>
+                </div>
             </div>
 
             {/* Controls */}
@@ -253,7 +379,7 @@ export const Returns = () => {
                                     <th className="px-6 py-4 text-sm font-semibold text-gray-600">Product</th>
                                     <th className="px-6 py-4 text-sm font-semibold text-gray-600">Qty</th>
                                     <th className="px-6 py-4 text-sm font-semibold text-gray-600">Inv Adjusted?</th>
-                                    <th className="px-6 py-4 text-sm font-semibold text-gray-600">Charges/Refund</th>
+                                    <th className="px-6 py-4 text-sm font-semibold text-gray-600">Financials</th>
                                     <th className="px-6 py-4 text-sm font-semibold text-gray-600 text-right">Actions</th>
                                 </tr>
                             </thead>
@@ -286,10 +412,23 @@ export const Returns = () => {
                                                 {ret.restockInventory ? 'Yes' : 'No'}
                                             </span>
                                         </td>
-                                        <td className="px-6 py-4 text-sm font-medium">
-                                            <span className={ret.returnCharges > 0 ? (ret.returnType === 'sales' ? 'text-red-600' : 'text-green-600') : 'text-gray-400'}>
-                                                {ret.returnCharges > 0 ? formatCurrency(ret.returnCharges) : '-'}
-                                            </span>
+                                        <td className="px-6 py-4 text-sm">
+                                            <div className="flex flex-col gap-1">
+                                                {ret.returnType === 'sales' && ret.refundAmount > 0 && (
+                                                    <span className="text-red-600 font-medium" title="Refund given to customer">
+                                                        Refund: {formatCurrency(ret.refundAmount)}
+                                                    </span>
+                                                )}
+                                                {ret.returnCharges > 0 && (
+                                                    <span className={ret.returnType === 'sales' ? 'text-orange-600 font-medium' : 'text-green-600 font-medium'} title={ret.returnType === 'sales' ? "Liability/Charges" : "Refund Received"}>
+                                                        {ret.returnType === 'sales' ? 'Charge: ' : 'Refund: '}
+                                                        {formatCurrency(ret.returnCharges)}
+                                                    </span>
+                                                )}
+                                                {(!ret.refundAmount && !ret.returnCharges) && (
+                                                    <span className="text-gray-400">-</span>
+                                                )}
+                                            </div>
                                         </td>
                                         <td className="px-6 py-4 text-right">
                                             <button
@@ -384,7 +523,7 @@ export const Returns = () => {
                         />
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                         <Input
                             label="Quantity"
                             type="number"
@@ -393,12 +532,28 @@ export const Returns = () => {
                             onChange={(e) => setFormData({ ...formData, quantity: Number(e.target.value) })}
                             required
                         />
+                        {formData.returnType === 'sales' && (
+                            <div className="space-y-1">
+                                <label className="block text-sm font-medium text-gray-700">Customer Refund Amount (₹)</label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    placeholder="Auto-calculated"
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-700 focus:outline-none"
+                                    value={formData.refundAmount}
+                                    readOnly
+                                    title="Auto-calculated based on original sale price"
+                                />
+                                <p className="text-xs text-gray-500">Auto-filled from Order ID</p>
+                            </div>
+                        )}
                         <Input
                             label={formData.returnType === 'sales' ? "Return Charges / Penalty (₹)" : "Refund Amount Received (₹)"}
                             type="number"
                             min="0"
                             step="0.01"
-                            placeholder="e.g. 150"
+                            placeholder="e.g. 50"
                             value={formData.returnCharges}
                             onChange={(e) => setFormData({ ...formData, returnCharges: Number(e.target.value) })}
                         />
