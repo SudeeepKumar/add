@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import {
     subscribeToProducts,
@@ -547,34 +547,36 @@ export const Inventory = () => {
     // FILTER PRODUCTS
     // ────────────────────────────────────────
 
-    const filteredProducts = products
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .filter((p) => {
-            const matchesSearch = !searchQuery ||
-                p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                p.sku.toLowerCase().includes(searchQuery.toLowerCase());
+    const filteredProducts = useMemo(() => {
+        return [...products]
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .filter((p) => {
+                const matchesSearch = !searchQuery ||
+                    p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    p.sku.toLowerCase().includes(searchQuery.toLowerCase());
 
-            let matchesStatus = true;
-            if (filterStatus === 'in-stock') matchesStatus = p.quantity > (p.lowStockThreshold || 10);
-            else if (filterStatus === 'low-stock') matchesStatus = p.quantity > 0 && p.quantity <= (p.lowStockThreshold || 10);
-            else if (filterStatus === 'out-of-stock') matchesStatus = p.quantity === 0;
+                let matchesStatus = true;
+                if (filterStatus === 'in-stock') matchesStatus = p.quantity > (p.lowStockThreshold || 10);
+                else if (filterStatus === 'low-stock') matchesStatus = p.quantity > 0 && p.quantity <= (p.lowStockThreshold || 10);
+                else if (filterStatus === 'out-of-stock') matchesStatus = p.quantity === 0;
 
-            let matchesDate = true;
-            if (dateFrom || dateTo) {
-                const productDate = p.purchaseDate?.toDate?.()
-                    || (p.purchaseDate ? new Date(p.purchaseDate) : null)
-                    || p.createdAt?.toDate?.() || (p.createdAt ? new Date(p.createdAt) : null);
-                if (productDate) {
-                    if (dateFrom) matchesDate = productDate >= new Date(dateFrom);
-                    if (dateTo && matchesDate) {
-                        const end = new Date(dateTo); end.setHours(23, 59, 59, 999);
-                        matchesDate = productDate <= end;
-                    }
-                } else { matchesDate = !dateFrom && !dateTo; }
-            }
+                let matchesDate = true;
+                if (dateFrom || dateTo) {
+                    const productDate = p.purchaseDate?.toDate?.()
+                        || (p.purchaseDate ? new Date(p.purchaseDate) : null)
+                        || p.createdAt?.toDate?.() || (p.createdAt ? new Date(p.createdAt) : null);
+                    if (productDate) {
+                        if (dateFrom) matchesDate = productDate >= new Date(dateFrom);
+                        if (dateTo && matchesDate) {
+                            const end = new Date(dateTo); end.setHours(23, 59, 59, 999);
+                            matchesDate = productDate <= end;
+                        }
+                    } else { matchesDate = !dateFrom && !dateTo; }
+                }
 
-            return matchesSearch && matchesStatus && matchesDate;
-        });
+                return matchesSearch && matchesStatus && matchesDate;
+            });
+    }, [products, searchQuery, filterStatus, dateFrom, dateTo]);
 
     // ────────────────────────────────────────
     // RENDER
