@@ -116,23 +116,9 @@ export const Reports = () => {
             }
         });
 
-        // Dynamically reverse Sales Returns from Income
-        filteredReturns.forEach(r => {
-            if (r.returnType === 'sales') {
-                const p = products.find(prod => prod.id === r.productId);
-                if (p) {
-                    const originalSaleValue = (Number(p.sellingPrice) || 0) * (Number(r.quantity) || 0);
-                    if (originalSaleValue > 0) {
-                        tIncome -= originalSaleValue;
-                        if (incomeByCategory['Product Sales']) {
-                            incomeByCategory['Product Sales'] -= originalSaleValue;
-                        } else {
-                            incomeByCategory['Product Sales'] = -originalSaleValue;
-                        }
-                    }
-                }
-            }
-        });
+        // Sales returns are now recorded as explicit 'expense' transactions (Sales Refund & Liability).
+        // Therefore, we no longer need to dynamically reverse them from tIncome here,
+        // as doing so would double-count the loss and mathematically break the Net Profit.
 
         return {
             totalIncome: tIncome,
