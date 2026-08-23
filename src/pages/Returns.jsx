@@ -105,6 +105,10 @@ export const Returns = () => {
                                 await delTransaction(tx.id);
                             }
 
+                            const safeReturnDate = (ret.returnDate && !isNaN(new Date(ret.returnDate).getTime())) 
+                                ? new Date(ret.returnDate) 
+                                : new Date();
+                                
                             // 4. Create new transactions
                             if (calculatedRefund > 0) {
                                 await addTransaction(user.uid, {
@@ -112,7 +116,7 @@ export const Returns = () => {
                                     category: 'Sales Refund',
                                     amount: calculatedRefund,
                                     description: `Refund given for Sales Return ${ret.orderId} - ${ret.productName}`,
-                                    date: format(new Date(ret.returnDate), 'yyyy-MM-dd'),
+                                    date: format(safeReturnDate, 'yyyy-MM-dd'),
                                     paymentMethod: 'System',
                                     referenceId: ret.id,
                                     status: 'completed',
@@ -125,7 +129,7 @@ export const Returns = () => {
                                     category: 'Liability - Return Charges',
                                     amount: Number(ret.returnCharges),
                                     description: `Liability/Penalty for Order ${ret.orderId} - ${ret.productName}`,
-                                    date: format(new Date(ret.returnDate), 'yyyy-MM-dd'),
+                                    date: format(safeReturnDate, 'yyyy-MM-dd'),
                                     paymentMethod: 'System',
                                     referenceId: ret.id,
                                     status: 'completed',
@@ -140,7 +144,7 @@ export const Returns = () => {
             toast.success(`Migration complete! ${migratedCount} past returns updated.`);
         } catch (error) {
             console.error("Migration error:", error);
-            toast.error("An error occurred during migration.");
+            toast.error(`Error: ${error.message || 'Unknown error'}`);
         } finally {
             setSaving(false);
         }
