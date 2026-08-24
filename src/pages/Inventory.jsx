@@ -403,41 +403,10 @@ export const Inventory = () => {
 
             await updateProduct(editingProduct.id, productData);
 
-            // DATA SYNC: Update linked transactions when price/quantity changes
-            const oldQty = editingProduct.quantity || 0;
-            const oldPrice = editingProduct.purchasePrice || 0;
-
-            if (oldQty !== qty || oldPrice !== price) {
-                try {
-                    const linkedTransactions = await getTransactionsByReference(editingProduct.id);
-                    const purchaseTransactions = linkedTransactions.filter(t => t.type === 'expense' && t.category === 'Purchase');
-
-                    if (purchaseTransactions.length > 0) {
-                        const latestTransaction = purchaseTransactions.sort((a, b) => b.date - a.date)[0];
-                        await updateTransaction(latestTransaction.id, {
-                            amount: qty * price,
-                            description: `Stock Update: ${productData.name} (${qty} × ${formatCurrency(price)})`,
-                        });
-                        toast.success('Product & linked transactions synced!');
-                    } else if (qty > 0) {
-                        await addTransaction(user.uid, {
-                            type: 'expense', category: 'Purchase',
-                            amount: qty * price,
-                            description: `Stock Update: ${productData.name} (${qty} × ${formatCurrency(price)})`,
-                            date: new Date(),
-                            paymentMethod: 'Cash',
-                            referenceId: editingProduct.id,
-                            status: 'completed',
-                        });
-                        toast.success('Product updated & transaction created!');
-                    }
-                } catch (syncError) {
-                    console.error('Sync error:', syncError);
-                    toast.error('Product updated, but transaction sync failed.');
-                }
-            } else {
-                toast.success('Product updated successfully');
-            }
+            // NOTE: We intentionally do NOT retroactively alter past Purchase transactions when a product
+            // is edited. Historical transactions are immutable records of what actually happened.
+            // If a price correction is needed, record a manual adjustment transaction instead.
+            toast.success('Product updated successfully');
 
             handleEditClose();
         } catch (error) {

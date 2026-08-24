@@ -15,9 +15,10 @@ import { Input } from '../components/common/Input';
 import { SearchableSelect } from '../components/common/SearchableSelect';
 import { EmptyState } from '../components/common/EmptyState';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { Plus, Trash2, Search, ArrowLeftRight, PackageX } from 'lucide-react';
+import { Plus, Trash2, Search, ArrowLeftRight, PackageX, Download } from 'lucide-react';
 import { formatCurrency } from '../utils/currencyUtils';
 import { format } from 'date-fns';
+import { exportSalesReturnSlipPDF } from '../utils/exportUtils';
 import toast from 'react-hot-toast';
 
 export const Returns = () => {
@@ -225,48 +226,30 @@ export const Returns = () => {
 
             const returnId = await addReturn(user.uid, returnData);
 
-            // Update Inventory if checked
-            if (formData.restockInventory) {
-                let newQuantity = product.quantity;
-                if (formData.returnType === 'sales') {
-                    newQuantity += Number(formData.quantity);
-                } else {
-                    // Purchase return means stock is sent back, so deduct
-                    newQuantity = Math.max(0, newQuantity - Number(formData.quantity));
-                }
-                
-                await updateProduct(formData.productId, {
-                    quantity: newQuantity
-                });
+            // ── INVENTORY UPDATE ──
+            // For PURCHASE RETURNS: always deduct stock (goods physically returned to supplier).
+            // For SALES RETURNS: only add back if customer returned sellable goods (restockInventory checkbox).
+            if (formData.returnType === 'purchase') {
+                // Mandatory deduction — goods are leaving your warehouse
+                const newQuantity = Math.max(0, product.quantity - Number(formData.quantity));
+                await updateProduct(formData.productId, { quantity: newQuantity });
+            } else if (formData.returnType === 'sales' && formData.restockInventory) {
+                // Optional — only if goods returned in sellable condition
+                const newQuantity = product.quantity + Number(formData.quantity);
+                await updateProduct(formData.productId, { quantity: newQuantity });
             }
 
-            // 1. Record financial transaction for Refund Amount
-            if (formData.returnType === 'sales' && Number(formData.refundAmount) > 0) {
+            // SALES RETURN:
+            //   - refundAmount → contra-revenue (deducted from Gross Sales in Reports)
+            //   - returnCharges → Extracted directly from return records in Reports.jsx
+            // We NO LONGER create an explicit transaction for returnCharges here.
+            // Purchase Return refund received from supplier
+            if (formData.returnType === 'purchase' && Number(formData.refundAmount) > 0) {
                 await addTransaction(user.uid, {
-                    type: 'expense',
-                    category: 'Sales Refund',
+                    type: 'income',
+                    category: 'Purchase Refund',
                     amount: Number(formData.refundAmount),
-                    description: `Refund given for Sales Return ${formData.orderId} - ${product.name}`,
-                    date: formData.returnDate,
-                    paymentMethod: 'System',
-                    referenceId: returnId,
-                    status: 'completed',
-                });
-            }
-
-            // 2. Record financial transaction for charges (Liability/Penalty)
-            if (Number(formData.returnCharges) > 0) {
-                const txType = formData.returnType === 'sales' ? 'expense' : 'income';
-                const txCategory = formData.returnType === 'sales' ? 'Liability - Return Charges' : 'Purchase Refund';
-                const txDesc = formData.returnType === 'sales' 
-                    ? `Liability/Penalty for Order ${formData.orderId} - ${product.name}`
-                    : `Refund received for Purchase Return ${formData.orderId} - ${product.name}`;
-
-                await addTransaction(user.uid, {
-                    type: txType,
-                    category: txCategory,
-                    amount: Number(formData.returnCharges),
-                    description: txDesc,
+                    description: `Refund received from supplier for Purchase Return ${formData.orderId} - ${product.name}`,
                     date: formData.returnDate,
                     paymentMethod: 'System',
                     referenceId: returnId,
@@ -435,13 +418,27 @@ export const Returns = () => {
                                             </div>
                                         </td>
                                         <td className="px-6 py-4 text-right">
-                                            <button
-                                                onClick={() => handleDelete(ret)}
-                                                className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                                title="Delete Return"
-                                            >
-                                                <Trash2 className="w-4 h-4" />
-                                            </button>
+                                            <div className="flex items-center justify-end gap-2">
+                                                {ret.returnType === 'sales' && (
+                                                    <button
+                                                        onClick={() => {
+                                                            const product = products.find(p => p.id === ret.productId);
+                                                            exportSalesReturnSlipPDF(ret, product, { businessName: 'BILLJI' });
+                                                        }}
+                                                        className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                                                        title="Download Credit Note"
+                                                    >
+                                                        <Download className="w-4 h-4" />
+                                                    </button>
+                                                )}
+                                                <button
+                                                    onClick={() => handleDelete(ret)}
+                                                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                    title="Delete Return"
+                                                >
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
+                                            </div>
                                         </td>
                                     </tr>
                                 ))}

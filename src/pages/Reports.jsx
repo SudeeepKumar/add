@@ -4,14 +4,17 @@ import { subscribeToTransactions } from '../services/transactionService';
 import { subscribeToProducts } from '../services/productService';
 import { subscribeToSales } from '../services/salesService';
 import { subscribeToReturns } from '../services/returnService';
+import { calculateFinancials } from '../services/financialService';
 import { Button } from '../components/common/Button';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { 
     Download, TrendingUp, TrendingDown, DollarSign, ShoppingBag, 
-    ArrowLeftRight, PieChart as PieChartIcon, BarChart2, Package 
+    ArrowLeftRight, PieChart as PieChartIcon, BarChart2, Package, BookOpen
 } from 'lucide-react';
 import { formatCurrency } from '../utils/currencyUtils';
 import { exportProfitLossPDF, exportToCSV } from '../utils/exportUtils';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
 import { format, subDays, startOfMonth, endOfMonth } from 'date-fns';
 import toast from 'react-hot-toast';
 import {
@@ -97,61 +100,46 @@ export const Reports = () => {
 
 
     // ──────────────────────────────────────────────────────────────
-    // 2. OVERVIEW & FINANCIAL METRICS
+    // 2. OVERVIEW & FINANCIAL METRICS (Filtered Period)
     // ──────────────────────────────────────────────────────────────
     
-    const { totalIncome, totalExpenses, netProfit, incomeData, expensesData } = useMemo(() => {
+    const periodFinancials = useMemo(() => {
+        return calculateFinancials({
+            transactions: filteredTxns,
+            sales: filteredSales,
+            returns: filteredReturns,
+        });
+    }, [filteredTxns, filteredSales, filteredReturns]);
+    
+    // We still need the detailed category breakdown for the charts
+    const { incomeData, expensesData } = useMemo(() => {
         const incomeByCategory = {};
         const expensesByCategory = {};
-        let tIncome = 0;
-        let tExpense = 0;
-
-        // 1. Calculate traditional operating expenses (excluding Asset Purchases)
+        
         filteredTxns.forEach((t) => {
-            if (t.type === 'income') {
+            if (t.type === 'income' && t.category !== 'Capital' && t.category !== 'Product Sales' && t.category !== 'Purchase Refund') {
                 incomeByCategory[t.category] = (incomeByCategory[t.category] || 0) + t.amount;
-                tIncome += t.amount;
-            } else if (t.type === 'expense' && t.category !== 'Purchase') {
-                // EXCLUDE 'Purchase' because inventory is an asset.
-                // Expense is recognized as COGS only when sold.
-                expensesByCategory[t.category] = (expensesByCategory[t.category] || 0) + t.amount;
-                tExpense += t.amount;
-            }
-        });
-
-        // 2. Calculate COGS (Cost of Goods Sold) dynamically from sales & returns
-        let cogs = 0;
-        filteredSales.forEach(sale => {
-            cogs += (Number(sale.totalCost) || 0);
-        });
-
-        // Reverse COGS for sales returns
-        filteredReturns.forEach(ret => {
-            if (ret.returnType === 'sales') {
-                const p = products.find(prod => prod.id === ret.productId);
-                if (p) {
-                    const returnCost = (Number(p.purchasePrice) || 0) * (Number(ret.quantity) || 0);
-                    cogs -= returnCost;
+            } else if (t.type === 'expense' && t.category !== 'Purchase' && t.category !== 'Sales Refund' && t.category !== 'Drawings') {
+                if (!t.category.includes('Return Charges')) {
+                    expensesByCategory[t.category] = (expensesByCategory[t.category] || 0) + t.amount;
                 }
             }
         });
-
-        // 3. Add COGS to expenses for accurate P&L
-        if (cogs > 0) {
-            expensesByCategory['Cost of Goods Sold (COGS)'] = cogs;
-            tExpense += cogs;
-        }
-
-        // Sales Returns refunds are already explicit 'expense' transactions, so tExpense handles them.
+        
+        if (periodFinancials.netCOGS > 0) expensesByCategory['Cost of Goods Sold (COGS)'] = periodFinancials.netCOGS;
+        if (periodFinancials.salesReturnsRefunds > 0) expensesByCategory['Sales Returns'] = periodFinancials.salesReturnsRefunds;
+        
+        const sReturnCharges = filteredReturns.filter(r => r.returnType === 'sales').reduce((sum, r) => sum + (Number(r.returnCharges) || 0), 0);
+        if (sReturnCharges > 0) expensesByCategory['Sales Return Charges'] = sReturnCharges;
+        
+        const pReturnCharges = filteredReturns.filter(r => r.returnType === 'purchase').reduce((sum, r) => sum + (Number(r.returnCharges) || 0), 0);
+        if (pReturnCharges > 0) expensesByCategory['Purchase Return Charges'] = pReturnCharges;
 
         return {
-            totalIncome: tIncome,
-            totalExpenses: tExpense, // Now includes COGS and Opertaing Expenses (but not inventory purchases)
-            netProfit: tIncome - tExpense,
             incomeData: Object.entries(incomeByCategory).map(([category, amount]) => ({ category, amount })),
             expensesData: Object.entries(expensesByCategory).map(([category, amount]) => ({ category, amount }))
         };
-    }, [filteredTxns, filteredSales, filteredReturns, products]);
+    }, [filteredTxns, filteredReturns, periodFinancials]);
 
     // Inventory Valuation (Current Snapshot, not date filtered)
     const { inventoryPurchaseValue } = useMemo(() => {
@@ -192,35 +180,38 @@ export const Reports = () => {
             });
         });
 
-        // 2. Subtract all sales returns (to get Net Sales)
+        // 2. Subtract all sales returns to get Net Sales
+        // CRITICAL: use ret.refundAmount (the actual amount refunded at time of return),
+        // NOT the current product sellingPrice which may have changed since the original sale.
         filteredReturns.forEach(ret => {
             if (ret.returnType === 'sales') {
-                const p = products.find(prod => prod.id === ret.productId);
-                if (p) {
-                    const returnRevenue = (Number(p.sellingPrice) || 0) * (Number(ret.quantity) || 0);
-                    const returnCost = (Number(p.purchasePrice) || 0) * (Number(ret.quantity) || 0);
-                    
-                    rev -= returnRevenue;
-                    cost -= returnCost;
-                    
-                    const key = ret.productName || 'Unknown Product';
-                    if (productMap[key]) {
-                        productMap[key].revenue -= returnRevenue;
-                        productMap[key].cost -= returnCost;
-                        productMap[key].qty -= (Number(ret.quantity) || 0);
-                    }
-                    
-                    let platform = 'Unknown';
-                    if (ret.saleId) {
-                        const sale = salesData.find(s => s.id === ret.saleId);
-                        if (sale) platform = sale.platform;
-                    } else if (ret.orderId) {
-                        const sale = salesData.find(s => s.orderId === ret.orderId);
-                        if (sale) platform = sale.platform;
-                    }
-                    
-                    salesByPlatform[platform] = (Number(salesByPlatform[platform]) || 0) - returnRevenue;
+                // Use stored refundAmount for revenue deduction
+                const returnRevenue = Number(ret.refundAmount) || 0;
+                // For COGS reversal, use purchasePrice stored on product at time of return
+                const product = products.find(prod => prod.id === ret.productId);
+                const returnCost = product 
+                    ? (Number(product.purchasePrice) || 0) * (Number(ret.quantity) || 0)
+                    : 0;
+
+                rev -= returnRevenue;
+                cost -= returnCost;
+
+                const key = ret.productName || 'Unknown Product';
+                if (productMap[key]) {
+                    productMap[key].revenue -= returnRevenue;
+                    productMap[key].cost -= returnCost;
+                    productMap[key].qty -= (Number(ret.quantity) || 0);
                 }
+
+                let platform = 'Unknown';
+                if (ret.saleId) {
+                    const sale = salesData.find(s => s.id === ret.saleId);
+                    if (sale) platform = sale.platform;
+                } else if (ret.orderId) {
+                    const sale = salesData.find(s => s.orderId === ret.orderId);
+                    if (sale) platform = sale.platform;
+                }
+                salesByPlatform[platform] = (Number(salesByPlatform[platform]) || 0) - returnRevenue;
             }
         });
 
@@ -311,8 +302,14 @@ export const Reports = () => {
             const monthEnd = endOfMonth(date);
 
             const mTxns = transactions.filter((t) => t.date >= monthStart && t.date <= monthEnd);
-            const mIncome = mTxns.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-            const mExpense = mTxns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+            const mIncome = mTxns
+                .filter(t => t.type === 'income')
+                .reduce((s, t) => s + t.amount, 0);
+            // Exclude 'Purchase' from expense — purchases are assets, not operating costs.
+            // They distort the trend chart with inventory restock spikes.
+            const mExpense = mTxns
+                .filter(t => t.type === 'expense' && t.category !== 'Purchase')
+                .reduce((s, t) => s + t.amount, 0);
 
             data.push({
                 month: format(date, 'MMM'),
@@ -326,15 +323,126 @@ export const Reports = () => {
 
 
     // ──────────────────────────────────────────────────────────────
+    // 6. FINANCIAL STATEMENTS (Tally-Style)
+    // ──────────────────────────────────────────────────────────────
+    const tallyData = useMemo(() => {
+        const endStr = dateRange.end;
+        const upToEndTxns = transactions.filter(t => format(t.date, 'yyyy-MM-dd') <= endStr);
+        const upToEndSales = salesData.filter(s => format(new Date(s.saleDate), 'yyyy-MM-dd') <= endStr);
+        const upToEndReturns = returnsData.filter(r => format(new Date(r.returnDate), 'yyyy-MM-dd') <= endStr);
+
+        const asOfDateFinancials = calculateFinancials({
+            transactions: upToEndTxns,
+            sales: upToEndSales,
+            returns: upToEndReturns,
+        });
+        
+        // For Trading & P&L we still need the breakdown
+        let operatingExpensesBreakdown = {};
+        let miscIncomesBreakdown = {};
+        
+        filteredTxns.forEach(t => {
+            if (t.type === 'expense' && t.category !== 'Purchase' && t.category !== 'Sales Refund' && t.category !== 'Drawings' && !t.category.includes('Return Charges')) {
+                operatingExpensesBreakdown[t.category] = (operatingExpensesBreakdown[t.category] || 0) + t.amount;
+            } else if (t.type === 'income' && t.category !== 'Product Sales' && t.category !== 'Capital') {
+                miscIncomesBreakdown[t.category] = (miscIncomesBreakdown[t.category] || 0) + t.amount;
+            }
+        });
+        
+        const pSalesReturnCharges = filteredReturns.filter(r => r.returnType === 'sales').reduce((sum, r) => sum + (Number(r.returnCharges) || 0), 0);
+        if (pSalesReturnCharges > 0) operatingExpensesBreakdown['Sales Return Charges'] = pSalesReturnCharges;
+        
+        const pPurchaseReturnCharges = filteredReturns.filter(r => r.returnType === 'purchase').reduce((sum, r) => sum + (Number(r.returnCharges) || 0), 0);
+        if (pPurchaseReturnCharges > 0) operatingExpensesBreakdown['Purchase Return Charges'] = pPurchaseReturnCharges;
+
+        // Extract values from periodFinancials for P&L
+        const { 
+            grossSales, salesReturnsRefunds, netSales, totalPurchases: grossPurchases, 
+            purchaseReturnsRefunds: purchaseReturns,
+            operatingExpenses, otherIncome: miscIncomes, netProfit: netProfitFin 
+        } = periodFinancials;
+        
+        const netPurchases = grossPurchases - purchaseReturns;
+        
+        const openingStock = 0; // Simplified for now
+        const closingStock = periodFinancials.historicalInventoryValue;
+
+        // Extract values from asOfDateFinancials for Balance Sheet
+        const {
+            historicalInventoryValue, cashBalance, totalAssets, currentLiabilities,
+            capitalIntroduced, drawings, equity, isBalanced, balanceDifference
+        } = asOfDateFinancials;
+        
+        // Use historical inventory for the balance sheet closing stock
+        const balanceSheetClosingStock = historicalInventoryValue;
+
+        return {
+            // P&L Metrics
+            openingStock, grossPurchases, purchaseReturns, netPurchases,
+            grossSales, salesReturnsRefunds, netSales,
+            closingStock,
+            operatingExpenses, operatingExpensesBreakdown, 
+            miscIncomes, miscIncomesBreakdown, netProfitFin,
+            // Balance Sheet Metrics
+            cashBalance, totalAssets, currentLiabilities, 
+            retainedEarnings: asOfDateFinancials.netProfit,
+            capitalIntroduced, drawings, equity, balanceSheetClosingStock,
+            isBalanced, balanceDifference
+        };
+    }, [filteredTxns, filteredReturns, transactions, returnsData, salesData, periodFinancials]);
+
+
+    // ──────────────────────────────────────────────────────────────
     // EXPORTS
     // ──────────────────────────────────────────────────────────────
 
-    const handleExportPDF = () => {
+    const handleExportPDF = async () => {
         try {
-            exportProfitLossPDF({ income: incomeData, expenses: expensesData, totalIncome, totalExpenses }, dateRange);
-            toast.success('PDF exported successfully');
+            // For P&L, keep the highly formatted specific PDF
+            if (activeTab === 'pnl') {
+                exportProfitLossPDF({ 
+                    income: incomeData, 
+                    expenses: expensesData, 
+                    totalIncome: periodFinancials.grossSales, 
+                    totalExpenses: periodFinancials.operatingExpenses 
+                }, dateRange);
+                toast.success('PDF exported successfully');
+                return;
+            }
+
+            // For all other tabs, capture exactly what's on screen
+            const element = document.getElementById('report-content-area');
+            if (!element) return;
+
+            toast.loading('Generating PDF...', { id: 'pdf-toast' });
+
+            const canvas = await html2canvas(element, { scale: 2, useCORS: true, backgroundColor: '#f9fafb' });
+            const imgData = canvas.toDataURL('image/png');
+
+            const pdf = new jsPDF('p', 'mm', 'a4');
+            const pdfWidth = pdf.internal.pageSize.getWidth();
+            const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+
+            let position = 0;
+            let heightLeft = pdfHeight;
+            const pageHeight = pdf.internal.pageSize.getHeight();
+
+            pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+            heightLeft -= pageHeight;
+
+            while (heightLeft >= 0) {
+                position = heightLeft - pdfHeight;
+                pdf.addPage();
+                pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+                heightLeft -= pageHeight;
+            }
+
+            pdf.save(`billji-${activeTab}-report-${dateRange.start}.pdf`);
+            toast.success('Report downloaded successfully!', { id: 'pdf-toast' });
+
         } catch (error) {
-            toast.error('Failed to export PDF');
+            console.error(error);
+            toast.error('Failed to generate report PDF', { id: 'pdf-toast' });
         }
     };
 
@@ -396,7 +504,8 @@ export const Reports = () => {
                     { id: 'overview', icon: PieChartIcon, label: 'Overview' },
                     { id: 'sales', icon: ShoppingBag, label: 'Sales' },
                     { id: 'returns', icon: ArrowLeftRight, label: 'Returns' },
-                    { id: 'pnl', icon: DollarSign, label: 'Profit & Loss' }
+                    { id: 'pnl', icon: DollarSign, label: 'Profit & Loss' },
+                    { id: 'financials', icon: BookOpen, label: 'Financials (Tally)' }
                 ].map(tab => (
                     <button
                         key={tab.id}
@@ -412,37 +521,46 @@ export const Reports = () => {
             </div>
 
             {/* Tab Contents */}
-            <div className="mt-6">
+            <div id="report-content-area" className="mt-6 bg-gray-50/50 p-2 rounded-xl">
                 
                 {/* ──────────────── OVERVIEW TAB ──────────────── */}
                 {activeTab === 'overview' && (
                     <div className="space-y-6">
                         {/* Summary Cards */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
                                 <div className="flex items-center justify-between mb-4">
-                                    <h3 className="text-sm font-medium text-gray-600">Total Revenue (Income)</h3>
+                                    <h3 className="text-sm font-medium text-gray-600">Gross Revenue</h3>
                                     <TrendingUp className="w-8 h-8 text-success-600" />
                                 </div>
-                                <p className="text-3xl font-bold text-gray-900">{formatCurrency(totalIncome)}</p>
+                                <p className="text-3xl font-bold text-gray-900">{formatCurrency(periodFinancials.grossSales)}</p>
+                            </div>
+                            <div className="bg-white rounded-xl shadow-sm border border-red-100 p-6">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="text-sm font-medium text-gray-600">Less: Sales Returns</h3>
+                                    <ArrowLeftRight className="w-8 h-8 text-red-400" />
+                                </div>
+                                <p className="text-3xl font-bold text-red-600">({formatCurrency(periodFinancials.salesReturnsRefunds)})</p>
+                                <p className="text-xs text-gray-400 mt-1">Net Revenue: {formatCurrency(periodFinancials.netSales)}</p>
                             </div>
                             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
                                 <div className="flex items-center justify-between mb-4">
                                     <h3 className="text-sm font-medium text-gray-600">Total Costs (Expenses)</h3>
                                     <TrendingDown className="w-8 h-8 text-danger-600" />
                                 </div>
-                                <p className="text-3xl font-bold text-gray-900">{formatCurrency(totalExpenses)}</p>
+                                <p className="text-3xl font-bold text-gray-900">{formatCurrency(periodFinancials.operatingExpenses)}</p>
                             </div>
                             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
                                 <div className="flex items-center justify-between mb-4">
-                                    <h3 className="text-sm font-medium text-gray-600">Net {netProfit >= 0 ? 'Profit' : 'Loss'}</h3>
-                                    <DollarSign className={`w-8 h-8 ${netProfit >= 0 ? 'text-primary-600' : 'text-danger-600'}`} />
+                                    <h3 className="text-sm font-medium text-gray-600">Net {periodFinancials.netProfit >= 0 ? 'Profit' : 'Loss'}</h3>
+                                    <DollarSign className={`w-8 h-8 ${periodFinancials.netProfit >= 0 ? 'text-primary-600' : 'text-danger-600'}`} />
                                 </div>
-                                <p className={`text-3xl font-bold ${netProfit >= 0 ? 'text-success-600' : 'text-danger-600'}`}>
-                                    {formatCurrency(Math.abs(netProfit))}
+                                <p className={`text-3xl font-bold ${periodFinancials.netProfit >= 0 ? 'text-success-600' : 'text-danger-600'}`}>
+                                    {formatCurrency(Math.abs(periodFinancials.netProfit))}
                                 </p>
                             </div>
                         </div>
+
 
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                             {/* Trend Graph */}
@@ -704,6 +822,208 @@ export const Reports = () => {
                             ) : (
                                 <p className="text-gray-500 text-center py-12">No expense data</p>
                             )}
+                        </div>
+                    </div>
+                )}
+
+                {/* ──────────────── FINANCIALS (TALLY) TAB ──────────────── */}
+                {activeTab === 'financials' && (
+                    <div className="space-y-8">
+                        {/* Profit & Loss Account */}
+                        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                            <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
+                                <h2 className="text-xl font-bold text-gray-900 text-center">Profit & Loss Account (Accrual-Basis)</h2>
+                                <p className="text-sm text-gray-500 text-center">For the selected period: {format(new Date(dateRange.start), 'dd MMM yyyy')} to {format(new Date(dateRange.end), 'dd MMM yyyy')}</p>
+                            </div>
+                            
+                            <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-gray-200">
+                                {/* Debit Side (Expenses) */}
+                                <div className="p-0">
+                                    <div className="flex justify-between bg-gray-100 px-4 py-2 font-semibold text-gray-700 text-sm border-b border-gray-200">
+                                        <span>Expenses (Dr.)</span>
+                                        <span>Amount (₹)</span>
+                                    </div>
+                                    <div className="p-4 space-y-3">
+                                        <div className="flex justify-between text-gray-800">
+                                            <span>To Purchases A/c</span>
+                                            <span>{formatCurrency(tallyData.grossPurchases).replace('₹', '')}</span>
+                                        </div>
+                                        <div className="flex justify-between text-gray-600 pl-4 text-sm">
+                                            <span>Less: Purchase Returns</span>
+                                            <span>({formatCurrency(tallyData.purchaseReturns).replace('₹', '')})</span>
+                                        </div>
+                                        <div className="flex justify-between font-medium text-gray-900 border-b border-gray-100 pb-2">
+                                            <span className="pl-6">Net Purchases</span>
+                                            <span>{formatCurrency(tallyData.netPurchases).replace('₹', '')}</span>
+                                        </div>
+                                        
+                                        <div className="pt-2">
+                                            <div className="font-semibold text-gray-900 mb-2">Operating Expenses</div>
+                                            {Object.entries(tallyData.operatingExpensesBreakdown).length > 0 ? (
+                                                Object.entries(tallyData.operatingExpensesBreakdown).map(([category, amount]) => (
+                                                    <div key={category} className="flex justify-between text-gray-600 pl-4 text-sm mb-1">
+                                                        <span>To {category} A/c</span>
+                                                        <span>{formatCurrency(amount).replace('₹', '')}</span>
+                                                    </div>
+                                                ))
+                                            ) : (
+                                                <div className="flex justify-between text-gray-400 pl-4 text-sm mb-1">
+                                                    <span>No Expenses</span>
+                                                    <span>0.00</span>
+                                                </div>
+                                            )}
+                                            <div className="flex justify-between font-medium text-gray-900 border-t border-gray-100 pt-2 mt-2">
+                                                <span className="pl-6">Total Expenses</span>
+                                                <span>{formatCurrency(tallyData.operatingExpenses).replace('₹', '')}</span>
+                                            </div>
+                                        </div>
+                                        
+                                        {tallyData.netProfitFin > 0 && (
+                                            <div className="flex justify-between font-bold text-gray-900 pt-8 border-t-2 border-gray-300 mt-4">
+                                                <span>To Net Profit (transferred to Capital)</span>
+                                                <span>{formatCurrency(tallyData.netProfitFin).replace('₹', '')}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Credit Side (Income / Revenue) */}
+                                <div className="p-0">
+                                    <div className="flex justify-between bg-gray-100 px-4 py-2 font-semibold text-gray-700 text-sm border-b border-gray-200">
+                                        <span>Income (Cr.)</span>
+                                        <span>Amount (₹)</span>
+                                    </div>
+                                    <div className="p-4 space-y-3">
+                                        <div className="flex justify-between text-gray-800">
+                                            <span>By Sales A/c</span>
+                                            <span>{formatCurrency(tallyData.grossSales).replace('₹', '')}</span>
+                                        </div>
+                                        <div className="flex justify-between text-gray-600 pl-4 text-sm">
+                                            <span>Less: Sales Returns</span>
+                                            <span>{formatCurrency(tallyData.salesReturnsRefunds).replace('₹', '')}</span>
+                                        </div>
+                                        <div className="flex justify-between font-medium text-gray-900 border-b border-gray-100 pb-2">
+                                            <span className="pl-6">Net Sales</span>
+                                            <span>{formatCurrency(tallyData.netSales).replace('₹', '')}</span>
+                                        </div>
+                                        
+                                        <div className="flex justify-between text-gray-800 pt-2 pb-2 border-b border-gray-100">
+                                            <span>By Closing Stock</span>
+                                            <span>{formatCurrency(tallyData.closingStock).replace('₹', '')}</span>
+                                        </div>
+                                        
+                                        {tallyData.miscIncomes > 0 && (
+                                            <div className="pt-2">
+                                                <div className="font-semibold text-gray-900 mb-2">Other Incomes</div>
+                                                {Object.entries(tallyData.miscIncomesBreakdown).map(([category, amount]) => (
+                                                    <div key={category} className="flex justify-between text-gray-600 pl-4 text-sm mb-1">
+                                                        <span>By {category} A/c</span>
+                                                        <span>{formatCurrency(amount).replace('₹', '')}</span>
+                                                    </div>
+                                                ))}
+                                                <div className="flex justify-between font-medium text-gray-900 border-t border-gray-100 pt-2 mt-2">
+                                                    <span className="pl-6">Total Misc Income</span>
+                                                    <span>{formatCurrency(tallyData.miscIncomes).replace('₹', '')}</span>
+                                                </div>
+                                            </div>
+                                        )}
+                                        
+                                        {tallyData.netProfitFin < 0 && (
+                                            <div className="flex justify-between font-bold text-gray-900 pt-8 border-t-2 border-gray-300 mt-4">
+                                                <span>By Net Loss (transferred to Capital)</span>
+                                                <span>{formatCurrency(Math.abs(tallyData.netProfitFin)).replace('₹', '')}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Balance Sheet */}
+                        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                            <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
+                                <h2 className="text-xl font-bold text-gray-900 text-center">Balance Sheet</h2>
+                                <p className="text-sm text-gray-500 text-center">As of {format(new Date(dateRange.end), 'dd MMM yyyy')}</p>
+                            </div>
+                            
+                            {!tallyData.isBalanced && (
+                                <div className="bg-red-50 border-b border-red-200 px-6 py-3">
+                                    <p className="text-red-700 font-medium text-center">
+                                        ⚠️ Financial data reconciliation error. Difference: ₹{tallyData.balanceDifference.toFixed(2)}
+                                    </p>
+                                </div>
+                            )}
+                            
+                            <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-gray-200">
+                                {/* Liabilities Side */}
+                                <div className="p-0 flex flex-col h-full">
+                                    <div className="flex justify-between bg-gray-100 px-4 py-2 font-semibold text-gray-700 text-sm border-b border-gray-200">
+                                        <span>Liabilities</span>
+                                        <span>Amount (₹)</span>
+                                    </div>
+                                    <div className="p-4 space-y-3 flex-grow">
+                                        <div className="flex justify-between font-bold text-gray-900">
+                                            <span>Capital Account</span>
+                                            <span></span>
+                                        </div>
+                                        <div className="flex justify-between text-gray-800 pl-4">
+                                            <span>Capital Introduced</span>
+                                            <span>{formatCurrency(tallyData.capitalIntroduced).replace('₹', '')}</span>
+                                        </div>
+                                        <div className="flex justify-between text-gray-800 pl-4">
+                                            <span>Add: Net Profit</span>
+                                            <span>{formatCurrency(tallyData.retainedEarnings).replace('₹', '')}</span>
+                                        </div>
+                                        <div className="flex justify-between text-gray-800 pl-4">
+                                            <span>Less: Drawings</span>
+                                            <span>{formatCurrency(tallyData.drawings).replace('₹', '')}</span>
+                                        </div>
+                                        <div className="flex justify-between font-bold text-gray-900 border-t border-gray-100 pt-2 mt-2">
+                                            <span className="pl-6">Total Equity</span>
+                                            <span>{formatCurrency(tallyData.equity).replace('₹', '')}</span>
+                                        </div>
+                                        
+                                        {tallyData.currentLiabilities > 0 && (
+                                            <>
+                                                <div className="flex justify-between font-bold text-gray-900 mt-6 pt-4 border-t border-gray-100">
+                                                    <span>Current Liabilities</span>
+                                                    <span>{formatCurrency(tallyData.currentLiabilities).replace('₹', '')}</span>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                    <div className="flex justify-between bg-gray-50 p-4 font-bold text-lg text-gray-900 border-t-2 border-b-2 border-gray-800 mt-auto">
+                                        <span>Total</span>
+                                        <span>{formatCurrency(tallyData.equity + tallyData.currentLiabilities).replace('₹', '')}</span>
+                                    </div>
+                                </div>
+
+                                {/* Assets Side */}
+                                <div className="p-0 flex flex-col h-full">
+                                    <div className="flex justify-between bg-gray-100 px-4 py-2 font-semibold text-gray-700 text-sm border-b border-gray-200">
+                                        <span>Assets</span>
+                                        <span>Amount (₹)</span>
+                                    </div>
+                                    <div className="p-4 space-y-3 flex-grow">
+                                        <div className="flex justify-between font-bold text-gray-900">
+                                            <span>Current Assets</span>
+                                            <span></span>
+                                        </div>
+                                        <div className="flex justify-between text-gray-800 pl-4">
+                                            <span>Closing Stock (Inventory Value)</span>
+                                            <span>{formatCurrency(tallyData.balanceSheetClosingStock).replace('₹', '')}</span>
+                                        </div>
+                                        <div className="flex justify-between text-gray-800 pl-4">
+                                            <span>Cash / Bank Balance</span>
+                                            <span>{formatCurrency(tallyData.cashBalance).replace('₹', '')}</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex justify-between bg-gray-50 p-4 font-bold text-lg text-gray-900 border-t-2 border-b-2 border-gray-800 mt-auto">
+                                        <span>Total</span>
+                                        <span>{formatCurrency(tallyData.totalAssets).replace('₹', '')}</span>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 )}

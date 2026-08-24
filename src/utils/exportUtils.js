@@ -828,3 +828,101 @@ export const generateInvoiceImage = async (invoice, businessSettings = {}) => {
         document.body.removeChild(container);
     }
 };
+
+/**
+ * Export Sales Return Slip (Credit Note)
+ */
+export const exportSalesReturnSlipPDF = (returnRecord, product, businessSettings = {}) => {
+    const doc = new jsPDF();
+    const pw = doc.internal.pageSize.getWidth();
+    const m = 14;
+
+    const blue = [41, 128, 185];
+    const dark = [40, 40, 40];
+    const gray = [120, 120, 120];
+
+    const fmt = (v) => {
+        const n = parseFloat(v) || 0;
+        return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    const formatDate = (d) => {
+        if (!d) return '—';
+        const dt = typeof d === 'string' ? new Date(d) : (d.toDate ? d.toDate() : d);
+        return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    };
+
+    // Header
+    doc.setFillColor(...blue);
+    doc.rect(0, 0, pw, 36, 'F');
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(20);
+    doc.setFont(undefined, 'bold');
+    doc.text('SALES RETURN CREDIT NOTE', m, 17);
+
+    doc.setFontSize(9);
+    doc.setFont(undefined, 'normal');
+    doc.text(businessSettings.businessName || 'Your Business', m, 25);
+
+    let y = 50;
+
+    doc.setTextColor(...dark);
+    doc.setFontSize(11);
+    doc.setFont(undefined, 'bold');
+    doc.text('Return Details', m, y);
+    y += 8;
+
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'normal');
+    doc.text(`Return ID: ${returnRecord.id}`, m, y);
+    doc.text(`Date: ${formatDate(returnRecord.returnDate)}`, pw - m, y, { align: 'right' });
+    y += 6;
+    doc.text(`Order ID: ${returnRecord.orderId || 'N/A'}`, m, y);
+    doc.text(`Platform: ${returnRecord.platform || 'N/A'}`, pw - m, y, { align: 'right' });
+    y += 6;
+    doc.text(`Reason: ${returnRecord.reason || 'N/A'}`, m, y);
+    
+    y += 15;
+
+    // Table
+    doc.autoTable({
+        startY: y,
+        head: [['Product Name', 'Qty', 'Unit Price', 'Gross Amount']],
+        body: [[
+            product?.name || 'Unknown Product',
+            returnRecord.quantity,
+            fmt(product?.price),
+            fmt(returnRecord.quantity * (product?.price || 0))
+        ]],
+        theme: 'grid',
+        headStyles: { fillColor: blue, textColor: [255, 255, 255] },
+        styles: { fontSize: 9 }
+    });
+
+    y = doc.lastAutoTable.finalY + 15;
+
+    const refundAmount = Number(returnRecord.refundAmount) || 0;
+    const returnCharges = Number(returnRecord.returnCharges) || 0;
+    const netSettlement = refundAmount - returnCharges;
+
+    doc.setFont(undefined, 'bold');
+    doc.setFontSize(10);
+    doc.text('Financial Settlement', m, y);
+    y += 8;
+
+    doc.setFont(undefined, 'normal');
+    doc.text('Refund Amount Given to Customer:', m, y);
+    doc.text(fmt(refundAmount), pw - m, y, { align: 'right' });
+    y += 6;
+    
+    doc.text('Less: Marketplace Return Charges:', m, y);
+    doc.text(`- ${fmt(returnCharges)}`, pw - m, y, { align: 'right' });
+    y += 6;
+
+    doc.setFont(undefined, 'bold');
+    doc.text('Net Settlement Impact:', m, y);
+    doc.text(fmt(netSettlement), pw - m, y, { align: 'right' });
+
+    doc.save(`return-slip-${returnRecord.orderId || returnRecord.id}.pdf`);
+};

@@ -13,6 +13,8 @@ export const EXPENSE_CATEGORIES = [
     'Maintenance & Repairs',
     'Professional Services',
     'Miscellaneous',
+    'Sales Return Charges',
+    'Purchase Return Charges',
 ];
 
 export const INCOME_CATEGORIES = [
